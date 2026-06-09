@@ -235,7 +235,7 @@ def make_g1_wb_grasp_env_cfg() -> G1GraspManagerBasedRlEnvCfg:
       ),
       "lift": RewardTermCfg(
         func=mdp.lift,
-        weight=50.0,
+        weight=100.0,
         params={
           "left_sensor": "left_hand_toaster_contact",
           "right_sensor": "right_hand_toaster_contact",
@@ -263,14 +263,14 @@ def make_g1_wb_grasp_env_cfg() -> G1GraspManagerBasedRlEnvCfg:
         #     weight=1.0,
         #     params={"d_scale": 1.5},
         # ),
-        "upright": RewardTermCfg(
-            func=velocity_mdp.flat_orientation,
-            weight=5.0,
-            params={
-                "std": 0.5,
-                "asset_cfg": SceneEntityCfg("robot", body_names=("torso_link",)),
-            },
-        ),
+        # "upright": RewardTermCfg(
+        #     func=velocity_mdp.flat_orientation,
+        #     weight=5.0,
+        #     params={
+        #         "std": 0.5,
+        #         "asset_cfg": SceneEntityCfg("robot", body_names=("torso_link",)),
+        #     },
+        # ),
         "feet_stumble": RewardTermCfg(
             func=mdp.feet_stumble,
             weight=-0.1,

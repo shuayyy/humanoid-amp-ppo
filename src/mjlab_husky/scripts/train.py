@@ -9,27 +9,30 @@ from pathlib import Path
 from typing import Literal, cast
 
 import tyro
-from mjlab.envs import ManagerBasedRlEnvCfg, ManagerBasedRlEnv
-from mjlab.rl import RslRlOnPolicyRunnerCfg
 from mjlab_husky.envs.g1_wb_grasp_rl_env import (
   G1GraspManagerBasedRlEnv,
   G1GraspManagerBasedRlEnvCfg,
 )
 from mjlab_husky.rl import RslRlVecEnvWrapper
+from mjlab_husky.rl import RslRlAMPOnPolicyRunnerCfg
 from mjlab_husky.tasks.registry import list_tasks, load_env_cfg, load_rl_cfg, load_runner_cls
 from mjlab.utils.gpu import select_gpus
 from mjlab.utils.os import dump_yaml, get_checkpoint_path, get_wandb_checkpoint_path
 from mjlab.utils.torch import configure_torch_backends
 from mjlab.utils.wandb import add_wandb_tags
 from mjlab.utils.wrappers import VideoRecorder
-from rsl_rl.runners import OnPolicyRunner
 # os.environ["WANDB_MODE"] = "offline"
+
+
+##enable for just PPO
+# from rsl_rl.runners import OnPolicyRunner
+# from mjlab.rl import RslRlOnPolicyRunnerCfg
 
 
 @dataclass(frozen=True)
 class TrainConfig:
-  env: ManagerBasedRlEnvCfg
-  agent: RslRlOnPolicyRunnerCfg
+  env: G1GraspManagerBasedRlEnvCfg
+  agent: RslRlAMPOnPolicyRunnerCfg
   registry_name: str | None = None
   video: bool = True
   video_length: int = 200
@@ -43,7 +46,8 @@ class TrainConfig:
   def from_task(task_id: str) -> "TrainConfig":
     env_cfg = load_env_cfg(task_id)
     agent_cfg = load_rl_cfg(task_id)
-    assert isinstance(agent_cfg, RslRlOnPolicyRunnerCfg)
+    # assert isinstance(agent_cfg, RslRlOnPolicyRunnerCfg)
+    assert isinstance(agent_cfg, (RslRlAMPOnPolicyRunnerCfg))
     return TrainConfig(env=env_cfg, agent=agent_cfg)
 
 
@@ -80,12 +84,11 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
   if rank == 0:
     print(f"[INFO] Logging experiment in directory: {log_dir}")
 
-  if isinstance(cfg.env, G1GraspManagerBasedRlEnvCfg):
-    env = G1GraspManagerBasedRlEnv(
-      cfg=cfg.env, device=device, render_mode="rgb_array" if cfg.video else None
-    )
-  else:
-    raise TypeError(f"Unsupported env cfg type: {type(cfg.env)}")
+  env = G1GraspManagerBasedRlEnv(
+    cfg=cfg.env,
+    device=device,
+    render_mode="rgb_array" if cfg.video else None,
+  )
 
   log_root_path = log_dir.parent  # Go up from specific run dir to experiment dir.
 
@@ -127,7 +130,9 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
   agent_cfg = asdict(cfg.agent)
   env_cfg = asdict(cfg.env)
 
-  runner_cls = load_runner_cls(task_id) or OnPolicyRunner
+  # runner_cls = load_runner_cls(task_id) or OnPolicyRunner
+  runner_cls = load_runner_cls(task_id)
+  assert runner_cls is not None, "AMP runner_cls is not registered for this task."
 
   runner_kwargs = {}
 

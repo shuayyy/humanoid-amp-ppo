@@ -68,18 +68,45 @@ def hands_at_markers(env: G1GraspManagerBasedRlEnv, left_sensor: str, right_sens
 
   return (sensor1_contact & sensor2_contact).float()
 
+# def lift(
+#   env: G1GraspManagerBasedRlEnv,
+#   left_sensor: str,
+#   right_sensor: str,
+#   xy_penalty_weight: float = 0.1,
+# ) -> torch.Tensor:
+#   marker_contact = hands_at_markers(
+#     env,
+#     left_sensor=left_sensor,
+#     right_sensor=right_sensor,
+#   )
+#   if not torch.any(marker_contact):
+#     return torch.zeros(env.num_envs, device=env.device)
+#
+#   obj_pose = get_object_pose(env)
+#   obj_pos = obj_pose[:, :3]
+#   target_pos = env.object_lift_target_pos_w
+#
+#   height_error = torch.abs(obj_pos[:, 2] - target_pos[:, 2])
+#   height_reward = 1.0 - torch.clamp(
+#     height_error / max(env.cfg.lift_height_thresh, 1.0e-6),
+#     min=0.0,
+#     max=1.0,
+#   )
+#
+#   xy_error = torch.norm(obj_pos[:, :2] - target_pos[:, :2], dim=-1)
+#   reward = torch.clamp(height_reward - xy_penalty_weight * xy_error, min=0.0, max=1.0)
+#
+#   return reward * marker_contact
+
 def lift(
   env: G1GraspManagerBasedRlEnv,
   left_sensor: str,
   right_sensor: str,
+  sensor_name: str = "toaster_contact",
   xy_penalty_weight: float = 0.1,
 ) -> torch.Tensor:
-  marker_contact = hands_at_markers(
-    env,
-    left_sensor=left_sensor,
-    right_sensor=right_sensor,
-  )
-  if not torch.any(marker_contact):
+  contact = hands_contact(env, sensor_name=sensor_name)
+  if not torch.any(contact):
     return torch.zeros(env.num_envs, device=env.device)
 
   obj_pose = get_object_pose(env)
@@ -96,7 +123,7 @@ def lift(
   xy_error = torch.norm(obj_pos[:, :2] - target_pos[:, :2], dim=-1)
   reward = torch.clamp(height_reward - xy_penalty_weight * xy_error, min=0.0, max=1.0)
 
-  return reward * marker_contact
+  return reward * contact
 
 #### regularization rewards ####
 

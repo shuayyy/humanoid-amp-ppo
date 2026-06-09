@@ -7,14 +7,14 @@ from mjlab.rl import (
 )
 
 # Keep AMP imports commented for later use.
-# from mjlab_husky.rl import RslRlAMPOnPolicyRunnerCfg
+from mjlab_husky.rl import RslRlAMPOnPolicyRunnerCfg
 
 
-# def unitree_g1_wb_grasp_ppo_runner_cfg() -> RslRlAMPOnPolicyRunnerCfg:
-def unitree_g1_wb_grasp_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
+def unitree_g1_wb_grasp_ppo_runner_cfg() -> RslRlAMPOnPolicyRunnerCfg:
+# def unitree_g1_wb_grasp_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
   """Create RL runner configuration for Unitree G1 wb_grasp task."""
-  # return RslRlAMPOnPolicyRunnerCfg(
-  return RslRlOnPolicyRunnerCfg(
+  return RslRlAMPOnPolicyRunnerCfg(
+  # return RslRlOnPolicyRunnerCfg(
     policy=RslRlPpoActorCriticCfg(
       init_noise_std=1.0,
       actor_obs_normalization=True,
@@ -36,8 +36,8 @@ def unitree_g1_wb_grasp_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
       lam=0.95,
       desired_kl=0.01,
       max_grad_norm=1.0,
-      # class_name="AMP_PPO",
-      class_name="PPO",
+      class_name="AMP_PPO",
+      # class_name="PPO",
     ),
     experiment_name="g1_wb_grasp",
     save_interval=500,

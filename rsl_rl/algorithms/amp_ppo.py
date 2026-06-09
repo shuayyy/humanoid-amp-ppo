@@ -427,25 +427,17 @@ class AMP_PPO:
                 expert_states = self.amp_normalizer.normalize_torch(expert_states.to(self.device), self.device)
                 policy_states = self.amp_normalizer.normalize_torch(policy_states, self.device)
                 
-            contact_phase_push = obs_batch['critic'][:, -4]
-            mask_push = contact_phase_push == 1.
+            policy_d = self.discriminator(policy_states.flatten(1))
+            expert_states = expert_states.to(self.device)
+            expert_d = self.discriminator(expert_states.flatten(1))
 
-            if mask_push.any():
-                policy_d = self.discriminator(policy_states.flatten(1))
-                expert_states = expert_states.to(self.device)
-                expert_d = self.discriminator(expert_states.flatten(1))
+            expert_loss = torch.nn.MSELoss()(expert_d, torch.ones(expert_d.size(), device=self.device))
+            policy_loss = torch.nn.MSELoss()(policy_d, -1 * torch.ones(policy_d.size(), device=self.device))
+            amp_loss = 0.5 * (expert_loss + policy_loss)
 
-                expert_loss = torch.nn.MSELoss()(expert_d, torch.ones(expert_d.size(), device=self.device))
-                policy_loss = torch.nn.MSELoss()(policy_d, -1 * torch.ones(policy_d.size(), device=self.device))
-                amp_loss = 0.5 * (expert_loss + policy_loss)
-
-                # grad penalty
-                grad_pen_loss = self.discriminator.compute_grad_pen(expert_states, lambda_=5)
-            else:
-                amp_loss = torch.tensor(0.0, device=self.device)
-                grad_pen_loss = torch.tensor(0.0, device=self.device)
-                expert_loss = torch.tensor(0.0, device=self.device)
-                policy_loss = torch.tensor(0.0, device=self.device)
+            # Train AMP on every sampled policy/expert state, without phase gating.
+            #Gradient penalty. It regularizes the discriminator so it does not become too aggressive or unstable.
+            grad_pen_loss = self.discriminator.compute_grad_pen(expert_states, lambda_=5)
 
             loss += (amp_loss + grad_pen_loss)
             self.amp_normalizer.update(policy_states.cpu().numpy())

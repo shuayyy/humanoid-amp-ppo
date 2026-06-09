@@ -117,7 +117,7 @@ class RslRlAMPOnPolicyRunnerCfg(RslRlOnPolicyRunnerCfg):
   amp_num_frames: int = 5
   use_lerp: bool = False
   amp_task_reward_lerp: float = 0.7
-  amp_reward_coef: float = 5.0
+  amp_reward_coef: float = 15.0
   amp_motion_files: str = "dataset/grasp_motion"
   amp_num_preload_transitions: int = 200000
   amp_discr_hidden_dims: Tuple[int, ...] = (256, 256)

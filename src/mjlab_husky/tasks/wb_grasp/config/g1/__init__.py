@@ -1,13 +1,12 @@
 from mjlab_husky.tasks.registry import register_mjlab_task
-
+# Keep the custom AMP-based WB runner available for future use, but do not
+# wire it into the current PPO task registration.
+from mjlab_husky.tasks.wb_grasp.rl import WbGraspOnPolicyRunner
 from .env_cfgs import (
   unitree_g1_wb_grasp_env_cfg,
 )
 from .rl_cfg import unitree_g1_wb_grasp_ppo_runner_cfg
 
-# Keep the custom AMP-based WB runner available for future use, but do not
-# wire it into the current PPO task registration.
-# from mjlab_husky.tasks.wb_grasp.rl import WbGraspOnPolicyRunner
 
 
 register_mjlab_task(
@@ -15,7 +14,8 @@ register_mjlab_task(
   env_cfg=unitree_g1_wb_grasp_env_cfg(),
   play_env_cfg=unitree_g1_wb_grasp_env_cfg(play=True),
   rl_cfg=unitree_g1_wb_grasp_ppo_runner_cfg(),
-  runner_cls=None,
+  # runner_cls=None, enable this for runner without AMPPPO
+  runner_cls=WbGraspOnPolicyRunner,  # Optional: specify a custom runner class if needed
 )
 
 """ 

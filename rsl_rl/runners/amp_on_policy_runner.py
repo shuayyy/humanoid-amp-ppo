@@ -147,12 +147,10 @@ class AMPOnPolicyRunner:
 
                     amp_reward = torch.zeros(self.env.num_envs, device=obs.device)
 
-                    mask = self.env.contact_phase[:, 0] == 1.0
-                    if mask.any():
-                        rewards[mask], logit, disc_reward = self.alg.discriminator.predict_amp_reward(
-                            self.amp_obs_frames[mask], rewards[mask], normalizer=self.alg.amp_normalizer
-                        )
-                        amp_reward[mask] += disc_reward
+                    rewards, logit, disc_reward = self.alg.discriminator.predict_amp_reward(
+                        self.amp_obs_frames, rewards, normalizer=self.alg.amp_normalizer
+                    )
+                    amp_reward += disc_reward
         
                     # process the step
                     self.alg.process_env_step(obs, rewards, dones, extras, next_amp_obs_with_term, self.amp_obs_frames)
