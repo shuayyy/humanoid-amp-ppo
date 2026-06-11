@@ -107,7 +107,7 @@ class G1_AMPLoader:
             
             self.trajectory_idxs.append(i)
             self.trajectory_weights.append(1 / len(os.listdir(motion_files)))
-            frame_duration = 1 / 50
+            frame_duration = 1 / 30
             
             self.trajectory_frame_durations.append(frame_duration)
             traj_len = (motion_data_processed.shape[0] - 1) * frame_duration # seconds

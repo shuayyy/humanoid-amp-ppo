@@ -20,19 +20,45 @@ from mjlab.utils.lab_api.math import (
 )
 
 
-
-def heading(env: G1GraspManagerBasedRlEnv) -> torch.Tensor:
-    return env.robot.data.heading_w.unsqueeze(-1)
-
-def vision(env: G1GraspManagerBasedRlEnv) -> torch.Tensor:
-    # Placeholder only. Do not use this in env_cfg until camera obs is implemented.
-    return torch.zeros(env.num_envs, 1, device=env.device)
-
 def root_pos(env: G1GraspManagerBasedRlEnv) -> torch.Tensor:
     return env.robot.data.root_link_pos_w[:, :3]
 
 def root_ori(env: G1GraspManagerBasedRlEnv) -> torch.Tensor:
     return env.robot.data.root_link_quat_w
+
+def foot_air_time(env: G1GraspManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:
+    sensor: ContactSensor = env.scene[sensor_name]
+    sensor_data = sensor.data
+    current_air_time = sensor_data.current_air_time
+    assert current_air_time is not None
+    return current_air_time
+
+def foot_contact(env: G1GraspManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:
+    sensor: ContactSensor = env.scene[sensor_name]
+    sensor_data =sensor.data
+    assert sensor_data.found is not None
+    return (sensor_data.found > 0).float()
+
+def foot_contact_forces(env: G1GraspManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:
+    sensor: ContactSensor = env.scene[sensor_name]
+    sensor_data = sensor.data
+    assert sensor_data is not None
+    forces_flat = sensor_data.force.flatten(start_dim=1)  # [B, N*3]
+    return torch.sign(forces_flat) * torch.log1p(torch.abs(forces_flat))
+
+
+""" Gtrasping observations are being commented """
+
+"""
+
+def vision(env: G1GraspManagerBasedRlEnv) -> torch.Tensor:
+# Placeholder only. Do not use this in env_cfg until camera obs is implemented.
+    return torch.zeros(env.num_envs, 1, device=env.device)
+
+
+def heading(env: G1GraspManagerBasedRlEnv) -> torch.Tensor:
+    return env.robot.data.heading_w.unsqueeze(-1)
+
 
 def object_pose(env: G1GraspManagerBasedRlEnv) -> torch.Tensor:
     obj_pos_w = env.toaster.data.root_link_pos_w[:, :3]
@@ -76,24 +102,5 @@ def place_pos(env: G1GraspManagerBasedRlEnv) -> torch.Tensor:
     # Placeholder target place position: [x, y, z]
     return torch.zeros(env.num_envs, 3, device=env.device)
 
-def foot_air_time(env: G1GraspManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:
-    sensor: ContactSensor = env.scene[sensor_name]
-    sensor_data = sensor.data
-    current_air_time = sensor_data.current_air_time
-    assert current_air_time is not None
-    return current_air_time
-
-def foot_contact(env: G1GraspManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:
-    sensor: ContactSensor = env.scene[sensor_name]
-    sensor_data =sensor.data
-    assert sensor_data.found is not None
-    return (sensor_data.found > 0).float()
-
-def foot_contact_forces(env: G1GraspManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:
-    sensor: ContactSensor = env.scene[sensor_name]
-    sensor_data = sensor.data
-    assert sensor_data is not None
-    forces_flat = sensor_data.force.flatten(start_dim=1)  # [B, N*3]
-    return torch.sign(forces_flat) * torch.log1p(torch.abs(forces_flat))
-
-
+    
+"""

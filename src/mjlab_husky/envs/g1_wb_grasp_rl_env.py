@@ -24,7 +24,7 @@ File roles:
 For adapting this file to fridge / whole-body manipulation:
     - Replace skateboard logic with fridge/object logic.
     - Replace foot-marker logic with hand-handle logic.
-    - Replace skate phases with reach/grasp/lift/place phases.
+    - Replace skate phases with locomotion/grasp/lift/place phases.
     
     """
 from dataclasses import dataclass, field
@@ -63,7 +63,7 @@ class G1GraspManagerBasedRlEnvCfg(ManagerBasedRlEnvCfg):
     # It stores common settings like scene, actions, observations, rewards, and resets.
     # This task config inherits from it to reuse the standard MJLab environment setup.
     # Extra fields here are task-specific settings for the G1 skateboarding environment.
-    reach_rewards: dict[str, RewardTermCfg] = field (default_factory= dict)
+    locomotion_rewards: dict[str, RewardTermCfg] = field (default_factory= dict)
     grasp_rewards: dict[str, RewardTermCfg] = field (default_factory = dict)
     regularization_rewards: dict[str, RewardTermCfg] = field (default_factory = dict)
 
@@ -157,8 +157,8 @@ class G1GraspManagerBasedRlEnv(ManagerBasedRlEnv):
 
         self.cycle_time = self.cfg.cycle_time
         self.robot = self.scene["robot"]
-        self.object = self.scene["toaster"]
-        self.toaster = self.object
+        # self.object = self.scene["toaster"]
+        # self.toaster = self.object
         self._init_buffers()
 
         self.common_step_counter = 0
@@ -190,6 +190,7 @@ class G1GraspManagerBasedRlEnv(ManagerBasedRlEnv):
         self._init_ids_buffers()
         self.phase_ratios = torch.tensor(self.cfg.phase_ratios, device=self.device).repeat(self.num_envs, 1)
         self.last_contacts = torch.zeros(self.num_envs, 2, dtype=torch.bool, device=self.device, requires_grad=False)
+        self.contact_filt = torch.zeros_like(self.last_contacts)
         self.contact_phase = torch.zeros(self.num_envs, 2, dtype=torch.float, device=self.device, requires_grad=False)
 
         self.phase_length_buf = torch.zeros(self.num_envs, device=self.device, dtype=torch.long, requires_grad=False)
@@ -199,9 +200,13 @@ class G1GraspManagerBasedRlEnv(ManagerBasedRlEnv):
             device=self.device,
             requires_grad=False,
         )
-        self.object_lift_target_pos_w = self.toaster.data.default_root_state[:, :3].clone()
-        self.object_lift_target_pos_w += self.scene.env_origins
-        self.object_lift_target_pos_w[:, 2] += self.cfg.lift_height_thresh
+        # Toaster disabled for locomotion-only runs.
+        self.object_lift_target_pos_w = torch.zeros(
+            self.num_envs, 3, device=self.device, dtype=torch.float
+        )
+        # self.object_lift_target_pos_w = self.toaster.data.default_root_state[:, :3].clone()
+        # self.object_lift_target_pos_w += self.scene.env_origins
+        # self.object_lift_target_pos_w[:, 2] += self.cfg.lift_height_thresh
         self.still = torch.zeros(self.num_envs, dtype=torch.bool, device=self.device, requires_grad=False)
         
         # push_init_body_pose = torch.from_numpy(np.load("dataset/ref_pose/push_start_pose_b.npy")).to(self.device).repeat(self.num_envs, 1 , 1)
@@ -229,15 +234,20 @@ class G1GraspManagerBasedRlEnv(ManagerBasedRlEnv):
             name_keys=["left_ankle_roll_link", "right_ankle_roll_link"],
             preserve_order=True,
         )
-        self.marker_body_ids, _ = self.toaster.find_sites(name_keys=[".*_marker"], preserve_order=True)
+        # Toaster disabled for locomotion-only runs.
+        self.marker_body_ids = []
         self.hand_site_ids, _ = self.robot.find_sites(
             name_keys=["left_palm", "right_palm"],
             preserve_order=True,
         )
-        self.grasp_site_ids, _ = self.toaster.find_sites(
-            name_keys=["left_grasp_marker", "right_grasp_marker"],
-            preserve_order=True,
-        )
+        self.grasp_site_ids = []
+        # self.marker_body_ids, _ = self.toaster.find_sites(
+        #     name_keys=[".*_marker"], preserve_order=True
+        # )
+        # self.grasp_site_ids, _ = self.toaster.find_sites(
+        #     name_keys=["left_grasp_marker", "right_grasp_marker"],
+        #     preserve_order=True,
+        # )
         self.left_foot_site_ids, _ = self.robot.find_sites(name_keys=["left_foot_1", "left_foot_2", "left_foot_3", "left_foot_4"], preserve_order=True)
         self.right_foot_site_ids, _ = self.robot.find_sites(name_keys=["right_foot_1", "right_foot_2", "right_foot_3", "right_foot_4"], preserve_order=True)
 
@@ -246,10 +256,10 @@ class G1GraspManagerBasedRlEnv(ManagerBasedRlEnv):
         # action_manager, observation_manager, termination_manager, etc.
         super().load_managers()
 
-        self.reach_reward_manager = RewardManager(
-            self.cfg.reach_rewards, self, scale_by_dt = self.cfg.scale_rewards_by_dt
+        self.locomotion_reward_manager = RewardManager(
+            self.cfg.locomotion_rewards, self, scale_by_dt = self.cfg.scale_rewards_by_dt
         )
-        print_info(f"[INFO]: {self.reach_reward_manager}")
+        print_info(f"[INFO]: {self.locomotion_reward_manager}")
 
         self.grasp_reward_manager = RewardManager(
             self.cfg.grasp_rewards, self, scale_by_dt = self.cfg.scale_rewards_by_dt
@@ -267,7 +277,7 @@ class G1GraspManagerBasedRlEnv(ManagerBasedRlEnv):
     def step(self, action: torch.Tensor) -> types.VecEnvStepReturn:
         """Apply action, step the simulation, and return observations, rewards, dones, and infos."""
         self.action_manager.process_action(action.to(self.device))
-        # self.still = self.command_manager.get_command("reach")[:, 0] < 0.1
+        # self.still = self.command_manager.get_command("locomotion")[:, 0] < 0.1
         self.still[:] = False
         q_before = self.robot.data.joint_pos.clone()
 
@@ -308,11 +318,11 @@ class G1GraspManagerBasedRlEnv(ManagerBasedRlEnv):
         # steer_reward_buf = self.steer_reward_manager.compute(self.step_dt) * contact_coef[:, 1]
         # transition_reward_buf = self.transition_reward_manager.compute(self.step_dt) * torch.logical_or(contact_coef[:, 2], contact_coef[:, 3])
         # self.reward_buf = steer_reward_buf + push_reward_buf + reg_reward_buf + transition_reward_buf
-        reach_reward_buf = self.reach_reward_manager.compute(self.step_dt)
+        locomotion_reward_buf = self.locomotion_reward_manager.compute(self.step_dt)
         grasp_reward_buf = self.grasp_reward_manager.compute(self.step_dt)
         reg_reward_buf = self.reg_reward_manager.compute(self.step_dt)
 
-        self.reward_buf = reach_reward_buf + grasp_reward_buf + reg_reward_buf
+        self.reward_buf = locomotion_reward_buf + grasp_reward_buf + reg_reward_buf
         self.reset_env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
         if len(self.reset_env_ids) > 0:
             self._reset_idx(self.reset_env_ids)
@@ -356,13 +366,13 @@ class G1GraspManagerBasedRlEnv(ManagerBasedRlEnv):
         robot_root_state[:, :3] += env_origins
         self.robot.write_root_state_to_sim(robot_root_state, env_ids)
 
-        toaster_root_state = self.toaster.data.default_root_state[env_ids].clone()
-        toaster_root_state[:, :3] += env_origins
-        self.toaster.write_root_state_to_sim(toaster_root_state, env_ids)
-        self.object_lift_target_pos_w[env_ids] = toaster_root_state[:, :3]
-        self.object_lift_target_pos_w[env_ids, 2] += self.cfg.lift_height_thresh
+        # toaster_root_state = self.toaster.data.default_root_state[env_ids].clone()
+        # toaster_root_state[:, :3] += env_origins
+        # self.toaster.write_root_state_to_sim(toaster_root_state, env_ids)
+        # self.object_lift_target_pos_w[env_ids] = toaster_root_state[:, :3]
+        # self.object_lift_target_pos_w[env_ids, 2] += self.cfg.lift_height_thresh
 
-        info = self.reach_reward_manager.reset(env_ids)
+        info = self.locomotion_reward_manager.reset(env_ids)
         self.extras["log"].update(info)
         info = self.grasp_reward_manager.reset(env_ids)
         self.extras["log"].update(info)
@@ -376,37 +386,29 @@ class G1GraspManagerBasedRlEnv(ManagerBasedRlEnv):
         """
         Contact-phase state.
 
-        Read hand-marker contact sensors and update filtered contact state used
-        by debug phase tracking.
+        Toaster contact is disabled for locomotion-only runs, so keep the buffers
+        at zero and just update the phase values.
         """
-        # Read hand-to-toaster contact sensors
-        left_sensor = self.scene.sensors["left_hand_toaster_contact"]
-        right_sensor = self.scene.sensors["right_hand_toaster_contact"]
-
-        # Contact = force above threshold
-        left_contact = torch.any(torch.norm(left_sensor.data.force, dim=-1) > 2.0, dim=-1)
-        right_contact = torch.any(torch.norm(right_sensor.data.force, dim=-1) > 2.0, dim=-1)
-
-        # Shape: [num_envs, 2] -> [left hand contact, right hand contact]
-        contact = torch.stack([left_contact, right_contact], dim=-1)
-
-        # Filter contact to avoid one-step flickering
-        self.contact_filt = torch.logical_or(contact, self.last_contacts)
-
-        # Save current contact for next step
+        # left_sensor = self.scene.sensors["left_hand_toaster_contact"]
+        # right_sensor = self.scene.sensors["right_hand_toaster_contact"]
+        # assert left_sensor.data.force is not None
+        # assert right_sensor.data.force is not None
+        # left_contact = torch.any(torch.norm(left_sensor.data.force, dim=-1) > 2.0, dim=-1)
+        # right_contact = torch.any(torch.norm(right_sensor.data.force, dim=-1) > 2.0, dim=-1)
+        # contact = torch.stack([left_contact, right_contact], dim=-1)
+        contact = torch.zeros_like(self.last_contacts)
+        self.contact_filt = contact
         self.last_contacts = contact
-
-        # Update grasp/reach/lift/place phase
         self._resample_contact_phases()
 
     def _resample_contact_phases(self):
         self.last_contact_phase = self.contact_phase.clone()
         phase = self._get_phase()
 
-        reach_phase = (phase >= self.phase_ratios[:, 0]) & (phase < self.phase_ratios[:, 1])
+        locomotion_phase = (phase >= self.phase_ratios[:, 0]) & (phase < self.phase_ratios[:, 1])
         grasp_phase = (phase >= self.phase_ratios[:, 1]) & (phase <= self.phase_ratios[:, 2])
 
-        self.contact_phase[:, 0] = reach_phase.float()
+        self.contact_phase[:, 0] = locomotion_phase.float()
         self.contact_phase[:, 1] = grasp_phase.float()
 
     # Convert per-environment phase step counters into a normalized cycle phase in [0, 1].
@@ -452,7 +454,7 @@ class G1GraspManagerBasedRlEnv(ManagerBasedRlEnv):
     def _visualize_contact_phase(self, visualizer: DebugVisualizer):
         contact_phase = self.contact_phase.clone()
 
-        reach_phase = contact_phase[:, 0]
+        locomotion_phase = contact_phase[:, 0]
         grasp_phase = contact_phase[:, 1]
 
         target_pos_w = self.robot.data.root_link_pos_w.clone()
@@ -460,12 +462,12 @@ class G1GraspManagerBasedRlEnv(ManagerBasedRlEnv):
 
         env_idx = visualizer.env_idx
 
-        if reach_phase[env_idx].item():
+        if locomotion_phase[env_idx].item():
             visualizer.add_sphere(
                 center=target_pos_w[env_idx],
                 radius=0.05,
                 color=(0.0, 0.0, 1.0, 1.0),
-                label="reach_phase",
+                label="locomotion_phase",
             )
 
         if grasp_phase[env_idx].item():

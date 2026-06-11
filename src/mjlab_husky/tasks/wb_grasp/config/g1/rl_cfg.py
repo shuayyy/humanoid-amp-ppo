@@ -40,7 +40,7 @@ def unitree_g1_wb_grasp_ppo_runner_cfg() -> RslRlAMPOnPolicyRunnerCfg:
       # class_name="PPO",
     ),
     experiment_name="g1_wb_grasp",
-    save_interval=500,
+    save_interval=50,
     num_steps_per_env=24,
     max_iterations=50_000,
   )

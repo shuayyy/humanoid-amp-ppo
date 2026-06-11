@@ -23,7 +23,7 @@ def unitree_g1_wb_grasp_env_cfg(play: bool = False) -> G1GraspManagerBasedRlEnvC
 
   cfg.scene.entities = {
     "robot": get_g1_29dof_robot_cfg(),
-    "toaster": get_toaster_cfg(),
+    # "toaster": get_toaster_cfg(),
   }
   #########################################################
   ##### terrain #####
@@ -179,10 +179,10 @@ def unitree_g1_wb_grasp_env_cfg(play: bool = False) -> G1GraspManagerBasedRlEnvC
     feet_ground_cfg,
     left_feet_ground_cfg,
     right_feet_ground_cfg,
-    toaster_contact_cfg,
-    left_hand_toaster_cfg,
-    right_hand_toaster_cfg,
-    illegal_toaster_contact_cfg,
+    # toaster_contact_cfg,
+    # left_hand_toaster_cfg,
+    # right_hand_toaster_cfg,
+    # illegal_toaster_contact_cfg,
     illegal_ground_contact_cfg,
   )
 

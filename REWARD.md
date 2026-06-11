@@ -92,7 +92,7 @@
 
 * [ ] Check if all rewards are active at all times.
 
-  * Problem: reach/contact/lift all active from step 0 can confuse PPO.
+  * Problem: locomotion/contact/lift all active from step 0 can confuse PPO.
 
 * [ ] Gate lift reward:
 
@@ -106,7 +106,7 @@
   contact reward active only when hands are near markers
   ```
 
-* [ ] Keep reach reward active early:
+* [ ] Keep locomotion reward active early:
 
   ```text
   hand_to_toaster / hands_at_markers active from start

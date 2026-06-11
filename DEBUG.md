@@ -25,7 +25,7 @@ GR00T VisualSim2Real: does not use classic feet swing reward; uses contact-stabi
 For the `wb_grasp` task:
 
 ```text
-walk/reach → both hands contact object → lift object
+walk/locomotion → both hands contact object → lift object
 ```
 
 Do not add full periodic swing/gait reward first.

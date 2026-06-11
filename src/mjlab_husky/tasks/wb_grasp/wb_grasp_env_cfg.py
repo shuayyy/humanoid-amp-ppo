@@ -1,6 +1,6 @@
 """Task-level config helpers for the G1 whole-body grasp task.
 
-This file defines grasp-specific config fields such as reach rewards,
+This file defines grasp-specific config fields such as locomotion rewards,
 grasp rewards, phase timing, and evaluation options. The final environment
 configuration is built later in config/g1/env_cfgs.py.
 """
@@ -8,7 +8,6 @@ configuration is built later in config/g1/env_cfgs.py.
 
 import math
 from mjlab.envs import mdp as env_mdp
-from mjlab.tasks.velocity import mdp as velocity_mdp
 from mjlab_husky.envs.g1_wb_grasp_rl_env import G1GraspManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers.action_manager import ActionTermCfg
@@ -18,6 +17,7 @@ from mjlab.managers.observation_manager import ObservationGroupCfg, ObservationT
 from mjlab.managers.reward_manager import RewardTermCfg
 from mjlab.managers.scene_entity_config import SceneEntityCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
+from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from mjlab.scene import SceneCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab_husky.tasks.wb_grasp import mdp
@@ -42,9 +42,6 @@ def make_g1_wb_grasp_env_cfg() -> G1GraspManagerBasedRlEnvCfg:
             noise=Unoise(n_min=-0.2, n_max=0.2),
             scale=0.25,
         ),
-        # "root_pos": ObservationTermCfg(func=mdp.root_pos),
-        # "root_ori": ObservationTermCfg(func=mdp.root_ori),
-
         "projected_gravity": ObservationTermCfg(
             func=mdp.projected_gravity,
             noise=Unoise(n_min=-0.05, n_max=0.05),
@@ -59,15 +56,18 @@ def make_g1_wb_grasp_env_cfg() -> G1GraspManagerBasedRlEnvCfg:
             scale=0.05,
         ),
         "actions": ObservationTermCfg(func=mdp.last_action),
-        "object_pose": ObservationTermCfg(func=mdp.object_pose),
-        "left_grasp_marker": ObservationTermCfg(
-            func=mdp.left_grasp_marker_pos,
-        ),
-        "right_grasp_marker": ObservationTermCfg(
-            func=mdp.right_grasp_marker_pos,
-        ),
-        # "place_pos": ObservationTermCfg(func=mdp.place_pos),
-        # "vision": ObservationTermCfg(func=mdp.vision),
+
+        # "root_pos": ObservationTermCfg(func=mdp.root_pos),
+        # "root_ori": ObservationTermCfg(func=mdp.root_ori),
+        # "object_pose": ObservationTermCfg(func=mdp.object_pose),
+        # "left_grasp_marker": ObservationTermCfg(
+        #     func=mdp.left_grasp_marker_pos,
+        # ),
+        # "right_grasp_marker": ObservationTermCfg(
+        #     func=mdp.right_grasp_marker_pos,
+        # ),
+        # # "place_pos": ObservationTermCfg(func=mdp.place_pos),
+        # # "vision": ObservationTermCfg(func=mdp.vision),
     }
 
     critic_terms = {
@@ -119,8 +119,25 @@ def make_g1_wb_grasp_env_cfg() -> G1GraspManagerBasedRlEnvCfg:
     ##
     # Commands
     ##
-    # No task command for fixed toaster grasp yet.
-    commands: dict[str, CommandTermCfg] = {}
+    commands: dict[str, CommandTermCfg] = {
+    "gostraight": UniformVelocityCommandCfg(
+        entity_name="robot",
+        resampling_time_range=(3.0, 8.0),
+        rel_standing_envs=0.0,
+        rel_heading_envs=0.0,
+        # rel_forward_envs=1.0,
+        heading_command=False,
+        heading_control_stiffness=0.5,
+        debug_vis=True,
+        ranges=UniformVelocityCommandCfg.Ranges(
+        lin_vel_x=(1.0, 1.3),
+        lin_vel_y=(0.0, 0.0),
+        ang_vel_z=(0.0, 0.0),
+        heading=None,
+        ),
+    )
+    }
+
 
     ##
     # Events
@@ -154,43 +171,23 @@ def make_g1_wb_grasp_env_cfg() -> G1GraspManagerBasedRlEnvCfg:
                 },
             },
         ),
-        "object_com": EventTermCfg(
-            mode="startup",
-            func=mdp.randomize_field,
-            domain_randomization=True,
-            params={
-                "asset_cfg": SceneEntityCfg("toaster", body_names=("object",)),
-                "operation": "add",
-                "field": "body_ipos",
-                "ranges": {
-                    0: (-0.01, 0.01),
-                    1: (-0.01, 0.01),
-                    2: (-0.01, 0.01),
-                },
+
+        "push_robot": EventTermCfg(
+        func=mdp.push_by_setting_velocity,
+        mode="interval",
+        interval_range_s=(1.0, 3.0),
+        params={
+            "velocity_range": {
+            "x": (-0.1, 0.1),
+            "y": (-0.1, 0.1),
+            "z": (-0.1, 0.1),
+            "roll": (-0.32, 0.32),
+            "pitch": (-0.32, 0.32),
+            "yaw": (-0.48, 0.48),
             },
+        },
         ),
-        "robot_friction": EventTermCfg(
-            mode="startup",
-            func=mdp.randomize_field,
-            domain_randomization=True,
-            params={
-                "asset_cfg": SceneEntityCfg("robot", geom_names=(".*",)),
-                "operation": "scale",
-                "field": "geom_friction",
-                "ranges": (0.3, 1.6),
-            },
-        ),
-        "object_friction": EventTermCfg(
-            mode="startup",
-            func=mdp.randomize_field,
-            domain_randomization=True,
-            params={
-                "asset_cfg": SceneEntityCfg("toaster", geom_names=(".*",)),
-                "operation": "scale",
-                "field": "geom_friction",
-                "ranges": (0.8, 1.2),
-            },
-        ),
+        
         "foot_friction": EventTermCfg(
             mode="startup",
             func=mdp.randomize_field,
@@ -199,62 +196,169 @@ def make_g1_wb_grasp_env_cfg() -> G1GraspManagerBasedRlEnvCfg:
                 "asset_cfg": SceneEntityCfg("robot", geom_names=(r"^(left|right)_foot[1-7]_collision$",)),  # Set per-robot.
                 "operation": "abs",
                 "field": "geom_friction",
-                "ranges": (0.3, 1.8),
+                "ranges": (0.3, 1.2),
             },
         ),
+
+
+        # "object_com": EventTermCfg(
+        #     mode="startup",
+        #     func=mdp.randomize_field,
+        #     domain_randomization=True,
+        #     params={
+        #         "asset_cfg": SceneEntityCfg("toaster", body_names=("object",)),
+        #         "operation": "add",
+        #         "field": "body_ipos",
+        #         "ranges": {
+        #             0: (-0.01, 0.01),
+        #             1: (-0.01, 0.01),
+        #             2: (-0.01, 0.01),
+        #         },
+        #     },
+        # ),
+        # "robot_friction": EventTermCfg(
+        #     mode="startup",
+        #     func=mdp.randomize_field,
+        #     domain_randomization=True,
+        #     params={
+        #         "asset_cfg": SceneEntityCfg("robot", geom_names=(".*",)),
+        #         "operation": "scale",
+        #         "field": "geom_friction",
+        #         "ranges": (0.3, 1.6),
+        #     },
+        # ),
+        # "object_friction": EventTermCfg(
+        #     mode="startup",
+        #     func=mdp.randomize_field,
+        #     domain_randomization=True,
+        #     params={
+        #         "asset_cfg": SceneEntityCfg("toaster", geom_names=(".*",)),
+        #         "operation": "scale",
+        #         "field": "geom_friction",
+        #         "ranges": (0.8, 1.2),
+        #     },
+        # ),
+
     }
 
     ##
     # Rewards
     ##
 
-    ### reach rewards
-    reach_rewards = {
-        "hand_to_toaster": RewardTermCfg(
-            func=mdp.hand_to_toaster,
-            weight=50.0,
-            params={"d_scale": 1.5},
+    ### locomotion rewards
+    locomotion_rewards = {
+        "track_linear_velocity": RewardTermCfg(
+            func=mdp.track_lin_vel,
+            weight=5.0,
+            params={
+                "command_name": "gostraight",
+                "std": math.sqrt(0.25),
+                "y_deadzone": (-0.0075, 0.075),
+                "z_deadzone": (-0.0075, 0.075),
+            },
         ),
-        # "dist_to_toaster": RewardTermCfg(
-        #     func=mdp.dist_to_toaster,
-        #     weight=50.0,
-        #     params={"d_scale": 1.5},
-        # ),
-    }
+        "yaw_rate_penalty": RewardTermCfg(
+            func=mdp.yaw_rate_penalty,
+            weight=-0.05,
+            params={
+                "command_name": "gostraight",
+                "threshold": 0.1,
+            },
+        ),
+        "feet_stumble": RewardTermCfg(
+            func=mdp.feet_stumble,
+            weight=-0.1,
+        ),
+        "feet_slip": RewardTermCfg(
+            func=mdp.feet_slip,
+            weight=-0.05,
+            params={"threshold_min": 0.05},
+        ),
+        "air_time": RewardTermCfg(
+            func=mdp.feet_air_time,
+            weight=0.05,  # Override per-robot.
+            params={
+                "sensor_name": "feet_ground_contact",
+                "threshold_min": 0.05,
+                "threshold_max": 0.5,
+                "command_name": "gostraight",
+                "command_threshold": 0.5,
+            },
+        ),
+        "upright": RewardTermCfg(
+            func=mdp.torso_upright,
+            weight=1.0,
+            params={
+                "std": math.sqrt(0.2),
+                "tilt_threshold": 0.25,
+            },
+        ),
+        "soft_landing": RewardTermCfg(
+            func=mdp.soft_landing,
+            weight=-1e-5,
+            params={
+                "sensor_name": "feet_ground_contact",
+                "threshold_min": 0.05,
+            },
+            ),
+        }
+    
+# """OLD LOCOMOTION REWARDS"""
+    # "hand_to_toaster": RewardTermCfg(
+    #     func=mdp.hand_to_toaster,
+    #     weight=50.0,
+    #     params={"d_scale": 1.5},
+    # ),
+    # "dist_to_toaster": RewardTermCfg(
+    #     func=mdp.dist_to_toaster,
+    #     weight=50.0,
+    #     params={"d_scale": 1.5},
+    # ),
+    # grasp_rewards = {
+    #   "hands_at_markers": RewardTermCfg(
+    #     func=mdp.hands_at_markers,
+    #     weight=50.0,
+    #     params={"left_sensor": "left_hand_toaster_contact", "right_sensor": "right_hand_toaster_contact"},
+    #   ),
+    #   "hands_contact": RewardTermCfg(
+    #     func=mdp.hands_contact,
+    #     weight=10.0,
+    #     params={"sensor_name": "toaster_contact"},
+    #   ),
+    #   "lift": RewardTermCfg(
+    #     func=mdp.lift,
+    #     weight=100.0,
+    #     params={
+    #       "left_sensor": "left_hand_toaster_contact",
+    #       "right_sensor": "right_hand_toaster_contact",
+    #     },
+    #   ),
+    # }
+    # "at_least_one_foot_contact": RewardTermCfg(
+    #     func=mdp.at_least_one_foot_contact,
+    #     weight=0.5,
+    #     params={
+    #         "contact_force_threshold": 5.0,
+    #         "illegal_sensor_names": (
+    #             "illegal_ground_contact",
+    #             "illegal_toaster_contact",
+    #         ),
+    #     },
+    # ),
 
-    grasp_rewards = {
-      "hands_at_markers": RewardTermCfg(
-        func=mdp.hands_at_markers,
-        weight=50.0,
-        params={"left_sensor": "left_hand_toaster_contact", "right_sensor": "right_hand_toaster_contact"},
-      ),
-      "hands_contact": RewardTermCfg(
-        func=mdp.hands_contact,
-        weight=10.0,
-        params={"sensor_name": "toaster_contact"},
-      ),
-      "lift": RewardTermCfg(
-        func=mdp.lift,
-        weight=100.0,
-        params={
-          "left_sensor": "left_hand_toaster_contact",
-          "right_sensor": "right_hand_toaster_contact",
-        },
-      ),
-    }
 
     ### regularization rewards
     regularization_rewards = {
         "alive": RewardTermCfg(
             func=env_mdp.is_alive,
-            weight=0.5,
+            weight=0.1,
         ),
-        "dof_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight=-5.0),
-        "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.01),
-        "action_acc_l2": RewardTermCfg(func=mdp.action_acc_l2, weight=-0.01),
+        "dof_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight=-0.1),
+        "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.05),
+        # "action_acc_l2": RewardTermCfg(func=mdp.action_acc_l2, weight=-0.01),
         # "joint_vel_l2": RewardTermCfg(func=mdp.joint_vel_l2, weight=-1e-3),
         # "joint_acc_l2": RewardTermCfg(func=mdp.joint_acc_l2, weight=-5.0e-7),
-        "joint_torques_l2": RewardTermCfg(func=mdp.joint_torques_l2, weight=-1e-6),
+        # "joint_torques_l2": RewardTermCfg(func=mdp.joint_torques_l2, weight=-1e-6),
         "self_collisions": RewardTermCfg(func=mdp.self_collision_cost, weight=-0.1, params={"sensor_name": "self_collision"}),
         # Disabled for now because env.step() sets `self.still[:] = False`,
         # so this reward is always zero.
@@ -263,44 +367,18 @@ def make_g1_wb_grasp_env_cfg() -> G1GraspManagerBasedRlEnvCfg:
         #     weight=1.0,
         #     params={"d_scale": 1.5},
         # ),
-        # "upright": RewardTermCfg(
-        #     func=velocity_mdp.flat_orientation,
-        #     weight=5.0,
+
+
+        # "illegal_contact": RewardTermCfg(
+        #     func=mdp.illegal_contact_penalty,
+        #     weight=-1.0e-3,
         #     params={
-        #         "std": 0.5,
-        #         "asset_cfg": SceneEntityCfg("robot", body_names=("torso_link",)),
+        #         "sensor_names": (
+        #             "illegal_ground_contact",
+        #             "illegal_toaster_contact",
+        #         ),
         #     },
         # ),
-        "feet_stumble": RewardTermCfg(
-            func=mdp.feet_stumble,
-            weight=-0.1,
-        ),
-        "feet_slip": RewardTermCfg(
-            func=mdp.feet_slip,
-            weight=-0.05,
-            params={"contact_force_threshold": 5.0},
-        ),
-        "at_least_one_foot_contact": RewardTermCfg(
-            func=mdp.at_least_one_foot_contact,
-            weight=0.5,
-            params={
-                "contact_force_threshold": 5.0,
-                "illegal_sensor_names": (
-                    "illegal_ground_contact",
-                    "illegal_toaster_contact",
-                ),
-            },
-        ),
-        "illegal_contact": RewardTermCfg(
-            func=mdp.illegal_contact_penalty,
-            weight=-2.5,
-            params={
-                "sensor_names": (
-                    "illegal_ground_contact",
-                    "illegal_toaster_contact",
-                ),
-            },
-        ),
     }
     ##
     # Terminations TODO: change termnation for the whole body grasp
@@ -313,22 +391,22 @@ def make_g1_wb_grasp_env_cfg() -> G1GraspManagerBasedRlEnvCfg:
             func=mdp.bad_orientation,
             params={"limit_angle": math.radians(70.0)},
         ),
-        "illegal_contact": TerminationTermCfg(
-            func=mdp.illegal_contact,
-            params={
-                "sensor_names": (
-                    "illegal_ground_contact",
-                    "illegal_toaster_contact",
-                ),
-            },
-        ),
-        "success": TerminationTermCfg(
-            func=mdp.grasp_success_held,
-            params={
-                "left_sensor": "left_hand_toaster_contact",
-                "right_sensor": "right_hand_toaster_contact",
-            },
-        ),
+        # "illegal_contact": TerminationTermCfg(
+        #     func=mdp.illegal_contact,
+        #     params={
+        #         "sensor_names": (
+        #             "illegal_ground_contact",
+        #             "illegal_toaster_contact",
+        #         ),
+        #     },
+        # ),
+        # "success": TerminationTermCfg(
+        #     func=mdp.grasp_success_held,
+        #     params={
+        #         "left_sensor": "left_hand_toaster_contact",
+        #         "right_sensor": "right_hand_toaster_contact",
+        #     },
+        # ),
     }
 
     ##
@@ -356,8 +434,8 @@ def make_g1_wb_grasp_env_cfg() -> G1GraspManagerBasedRlEnvCfg:
         events=events,
         terminations=terminations,
         curriculum=curriculum,
-        reach_rewards=reach_rewards,
-        grasp_rewards=grasp_rewards,
+        locomotion_rewards=locomotion_rewards,
+        # grasp_rewards=grasp_rewards,
         regularization_rewards=regularization_rewards,
         viewer=ViewerConfig(
             origin_type=ViewerConfig.OriginType.ASSET_BODY,

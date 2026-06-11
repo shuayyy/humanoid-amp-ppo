@@ -102,7 +102,7 @@ class VecEnv(ABC):
             dictionary keys are used by rsl_rl:
 
             - "time_outs" (torch.Tensor): Timeouts for the environments. These correspond to terminations that
-               happen due to time limits and not due to the environment reaching a terminal state. This is useful
+               happen due to time limits and not due to the environment locomotioning a terminal state. This is useful
                for environments that have a fixed episode length.
 
             - "log" (dict[str, float | torch.Tensor]): Additional information for logging and debugging purposes.
