@@ -8,14 +8,10 @@
 from .actor_critic import ActorCritic
 from .actor_critic_recurrent import ActorCriticRecurrent
 from .rnd import *
-from .student_teacher import StudentTeacher
-from .student_teacher_recurrent import StudentTeacherRecurrent
 from .symmetry import *
 from .discriminator_multi import DiscriminatorMulti
 __all__ = [
     "ActorCritic",
     "ActorCriticRecurrent",
-    "StudentTeacher",
-    "StudentTeacherRecurrent",
     "DiscriminatorMulti",
 ]

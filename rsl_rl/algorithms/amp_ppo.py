@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 from torch._tensor import Tensor
-from torch._tensor import Tensor
 from typing import Any
 from copy import deepcopy
 
@@ -153,7 +152,6 @@ class AMP_PPO:
     def init_storage(self, training_type, num_envs, num_transitions_per_env, obs, actions_shape):
         # create rollout storage
         self.storage = RolloutStorage(
-            training_type,
             num_envs,
             num_transitions_per_env,
             obs,

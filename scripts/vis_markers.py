@@ -4,10 +4,8 @@ import mujoco
 import mujoco.viewer
 
 from mjlab.entity import EntityCfg
-from mjlab_husky.asset_zoo.robots.skateboard.g1_constants import (
-  get_g1_29dof_robot_cfg,
-  get_toaster_cfg,
-)
+from mjlab_g1.assets.g1_constants import get_g1_29dof_robot_cfg
+from mjlab_g1.assets.toaster_constants import get_toaster_cfg
 from mjlab.scene import Scene, SceneCfg
 from mjlab.terrains import TerrainImporterCfg
 
