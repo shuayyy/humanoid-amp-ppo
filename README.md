@@ -1,4 +1,4 @@
-# AMP-PPO: Human-Prior RL Training
+# humanoid-amp-ppo
 
 AMP-based humanoid RL training for the following tasks:
 
@@ -20,17 +20,23 @@ This repo includes a discriminator trained on human motion data retargeted to th
 
 This repo is developed with `uv`.
 
+Install `uv`, clone the repository together with the DeFM submodule, and install the project:
+
 ```bash
 curl -LsSf https://astral.sh/uv/install.sh | sh
-git clone https://github.com/TeleHuman/humanoid_skateboarding.git
-cd humanoid_skateboarding
+
+git clone --recurse-submodules https://github.com/shuayyy/humanoid-amp-ppo.git
+cd humanoid-amp-ppo
+
 uv sync
 uv pip install -e .
+uv pip install --no-deps -e third_party/defm
 ```
 
-Installed package:
+Installed packages:
 
-- `mjlab-g1`
+* `mjlab-g1`
+* `defm` from `third_party/defm`
 
 ## Task IDs
 
