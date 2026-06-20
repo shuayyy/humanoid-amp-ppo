@@ -14,6 +14,7 @@ from mjlab.managers.reward_manager import RewardManager, RewardTermCfg
 from mjlab.scene import Scene
 from mjlab.sim.sim import Simulation
 from mjlab.tasks.manipulation.mdp.commands import LiftingCommand
+from mjlab_g1.perception.encoders import DeFMEncoder
 from mjlab.utils.logging import print_info
 from mjlab.viewer.offscreen_renderer import OffscreenRenderer
 _DESIRED_FRAME_COLORS = ((1.0, 0.5, 0.5), (0.5, 1.0, 0.5), (0.5, 0.5, 1.0))
@@ -39,6 +40,10 @@ class G1DualarmManagerBasedRlEnvCfg(ManagerBasedRlEnvCfg):
     lift_height_thresh: float = 0.8
     hold_steps: int = 20
     fall_angle_thresh: float = math.radians(70.0)
+    use_depth_obs: bool = True
+    depth_camera_name: str = "robot/realsense_d435_depth"
+    depth_height: int = 192
+    depth_width: int = 256
 
 
     """Whether in evaluation mode. If True, will save metrics to JSON and exit after all episodes complete."""
@@ -97,6 +102,13 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
             model = self.sim.model,
             data = self.sim.data,
         )
+
+        if self.scene.sensor_context is None:
+            raise RuntimeError(
+                "No sensor context. Check that head_depth is in cfg.scene.sensors."
+            )
+
+        self.sim.set_sensor_context(self.scene.sensor_context)
         
 
         # Print environment info.
@@ -157,7 +169,39 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         self.object_lift_target_pos_w = self.toaster.data.default_root_state[:, :3].clone()
         self.object_lift_target_pos_w += self.scene.env_origins
         self.object_lift_target_pos_w[:, 2] += self.cfg.lift_height_thresh
-        
+
+        self.depth_encoder = DeFMEncoder(device=self.device)
+
+        self.depth_feature_buf = torch.zeros(
+            self.num_envs,
+            self.depth_encoder.output_dim,
+            device=self.device,
+            dtype=torch.float32,
+        )
+
+    def update_depth_features(self) -> None:
+        """Render batched depth and encode one frozen 192-D feature per environment."""
+        self.sim.sense()
+
+        depth = self.scene["head_depth"].data.depth
+        assert depth is not None
+        assert depth.shape == (
+            self.num_envs,
+            224,
+            224,
+            1,
+        ), depth.shape
+        assert torch.isfinite(depth).all()
+
+        features = self.depth_encoder(depth)
+
+        assert features.shape == (
+            self.num_envs,
+            self.depth_encoder.output_dim,
+        ), features.shape
+        assert torch.isfinite(features).all()
+
+        self.depth_feature_buf.copy_(features)
 
     def _init_ids_buffers(self):
         """
@@ -243,6 +287,7 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         if "interval" in self.event_manager.available_modes:
             self.event_manager.apply(mode="interval", dt=self.step_dt)
 
+        self.update_depth_features()
         self.obs_buf = self.observation_manager.compute(update_history=True)
         return(
             self.obs_buf,
@@ -283,7 +328,6 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         self.extras["log"].update(info)
 
         self.success_hold_buf[env_ids] = 0
-
 
     def _get_hand_toaster_dis(self):
         """

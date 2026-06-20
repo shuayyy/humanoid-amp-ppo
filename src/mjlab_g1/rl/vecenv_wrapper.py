@@ -71,6 +71,14 @@ class RslRlVecEnvWrapper(VecEnv):
     return self.unwrapped.seed(seed)
 
   def get_observations(self) -> TensorDict:
+    update_depth_features = getattr(
+      self.unwrapped,
+      "update_depth_features",
+      None,
+    )
+    if callable(update_depth_features):
+      update_depth_features()
+
     obs_dict = self.unwrapped.observation_manager.compute()
     return TensorDict(obs_dict, batch_size=[self.num_envs])
 

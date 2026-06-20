@@ -60,6 +60,9 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
             func=mdp.right_grasp_marker_pos,
         ),
         "place_pos": ObservationTermCfg(func=mdp.place_pos),
+        "depth_features": ObservationTermCfg(
+            func=mdp.get_depth_features,
+        ),
         # "vision": ObservationTermCfg(func=mdp.vision),
     }
 

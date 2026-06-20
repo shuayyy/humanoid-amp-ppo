@@ -6,7 +6,7 @@ build-backend = "uv_build"
 name = "mjlab_g1"
 version = "0.1.0"
 license = "Apache-2.0"
-description = "Humanoid Skateboarding System via Physics-Aware Whole-Body Control"
+description = "Humanoid AMP-PPO"
 readme = "README.md"
 requires-python = ">=3.12,<3.14"
 dependencies = [

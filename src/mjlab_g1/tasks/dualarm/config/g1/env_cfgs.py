@@ -8,7 +8,7 @@ from mjlab_g1.assets.toaster_constants import get_toaster_cfg
 from mjlab_g1.envs.g1_dualarm_rl_env import G1DualarmManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
-from mjlab.sensor import ContactMatch, ContactSensorCfg
+from mjlab.sensor import CameraSensorCfg, ContactMatch, ContactSensorCfg
 from mjlab_g1.tasks.dualarm import mdp
 from mjlab_g1.tasks.dualarm.dual_arm_env_cfg import (
   make_g1_dualarm_env_cfg,
@@ -175,6 +175,17 @@ def unitree_g1_dualarm_env_cfg(play: bool = False) -> G1DualarmManagerBasedRlEnv
     reduce="none",
     num_slots=1,
   )
+
+  head_depth_cfg = CameraSensorCfg(
+    name="head_depth",
+    camera_name="robot/realsense_d435_depth",
+    width=224,
+    height=224,
+    data_types=("depth",),
+    use_textures=False,
+    use_shadows=False,
+    enabled_geom_groups=(0, 1, 2),
+  )
   
   cfg.scene.sensors = (
     self_collision_cfg,
@@ -186,6 +197,7 @@ def unitree_g1_dualarm_env_cfg(play: bool = False) -> G1DualarmManagerBasedRlEnv
     right_hand_toaster_cfg,
     illegal_toaster_contact_cfg,
     illegal_ground_contact_cfg,
+    head_depth_cfg,
   )
 
   joint_pos_action = cfg.actions["joint_pos"]
