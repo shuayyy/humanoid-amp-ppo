@@ -15,7 +15,9 @@ dependencies = [
     "pybullet",
     "rsl-rl-lib",
     "pynput",
-    "scipy"
+    "scipy",
+    # Needed by the dual-arm DeFM depth encoder.
+    "defm",
 ]
 
 [project.entry-points."mjlab.tasks"]
@@ -30,5 +32,24 @@ src = ["src"]  # Helpful for recognizing first-party imports.
 indent-width = 4
 
 [tool.uv.sources]
-mjlab = { git = "https://github.com/mujocolab/mjlab.git", rev = "13212ad" }
-rsl-rl-lib = { path = "rsl_rl" }
+mjlab = { git = "https://github.com/mujocolab/mjlab.git", rev = "v1.4.0" }
+rsl-rl-lib = { path = "rsl_rl", editable = true }
+# Needed by the dual-arm DeFM depth encoder.
+defm = { path = "third_party/defm", editable = true }
+
+# Needed by the dual-arm DeFM depth encoder.
+# Override third_party/defm metadata because upstream pins numpy<2.0.0,
+# which conflicts with MJLab 1.4 / ONNX dependencies on Python 3.13.
+[[tool.uv.dependency-metadata]]
+name = "defm"
+version = "1.0.1"
+requires-python = ">=3.8"
+requires-dist = [
+    "huggingface-hub>=0.36.0",
+    "omegaconf>=2.3.0",
+    "opencv-python>=4.11.0.86",
+    "pillow>=10.4.0",
+    "scikit-learn>=1.3.2",
+    "torch>=2.4.1",
+    "torchvision>=0.19.1",
+]

@@ -16,7 +16,7 @@ from mjlab.tasks.manipulation.mdp.commands import LiftingCommandCfg
 from mjlab.scene import SceneCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab_g1.tasks.dualarm import mdp
-from mjlab.terrains import TerrainImporterCfg
+from mjlab.terrains import TerrainEntityCfg
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
 
@@ -147,7 +147,6 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
         "base_com": EventTermCfg(
             mode="startup",
             func=mdp.randomize_field,
-            domain_randomization=True,
             params={
                 "asset_cfg": SceneEntityCfg("robot", body_names=("torso_link",)),
                 "operation": "add",
@@ -163,7 +162,6 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
         "foot_friction": EventTermCfg(
             mode="startup",
             func=mdp.randomize_field,
-            domain_randomization=True,
             params={
                 "asset_cfg": SceneEntityCfg("robot", geom_names=(r"^(left|right)_foot[1-7]_collision$",)),  # Set per-robot.
                 "operation": "abs",
@@ -176,7 +174,6 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
         "object_com": EventTermCfg(
             mode="startup",
             func=mdp.randomize_field,
-            domain_randomization=True,
             params={
                 "asset_cfg": SceneEntityCfg("toaster", body_names=("object",)),
                 "operation": "add",
@@ -191,7 +188,6 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
         "robot_friction": EventTermCfg(
             mode="startup",
             func=mdp.randomize_field,
-            domain_randomization=True,
             params={
                 "asset_cfg": SceneEntityCfg("robot", geom_names=(".*",)),
                 "operation": "scale",
@@ -202,7 +198,6 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
         "object_friction": EventTermCfg(
             mode="startup",
             func=mdp.randomize_field,
-            domain_randomization=True,
             params={
                 "asset_cfg": SceneEntityCfg("toaster", geom_names=(".*",)),
                 "operation": "scale",
@@ -345,7 +340,7 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
 
     return G1DualarmManagerBasedRlEnvCfg(
         scene=SceneCfg(
-            terrain=TerrainImporterCfg(
+            terrain=TerrainEntityCfg(
                 terrain_type="plane",
                 terrain_generator=None,
             ),

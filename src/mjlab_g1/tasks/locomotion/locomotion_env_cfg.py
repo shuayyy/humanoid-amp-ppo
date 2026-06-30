@@ -16,7 +16,7 @@ from mjlab.tasks.velocity.mdp import UniformVelocityCommandCfg
 from mjlab.scene import SceneCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab_g1.tasks.locomotion import mdp
-from mjlab.terrains import TerrainImporterCfg
+from mjlab.terrains import TerrainEntityCfg
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
 
@@ -143,7 +143,6 @@ def make_g1_locomotion_env_cfg() -> G1LocomotionManagerBasedRlEnvCfg:
         "base_com": EventTermCfg(
             mode="startup",
             func=mdp.randomize_field,
-            domain_randomization=True,
             params={
                 "asset_cfg": SceneEntityCfg("robot", body_names=("torso_link",)),
                 "operation": "add",
@@ -175,7 +174,6 @@ def make_g1_locomotion_env_cfg() -> G1LocomotionManagerBasedRlEnvCfg:
         "foot_friction": EventTermCfg(
             mode="startup",
             func=mdp.randomize_field,
-            domain_randomization=True,
             params={
                 "asset_cfg": SceneEntityCfg("robot", geom_names=(r"^(left|right)_foot[1-7]_collision$",)),  # Set per-robot.
                 "operation": "abs",
@@ -283,7 +281,7 @@ def make_g1_locomotion_env_cfg() -> G1LocomotionManagerBasedRlEnvCfg:
 
     return G1LocomotionManagerBasedRlEnvCfg(
         scene=SceneCfg(
-            terrain=TerrainImporterCfg(
+            terrain=TerrainEntityCfg(
                 terrain_type="plane",
                 terrain_generator=None,
             ),

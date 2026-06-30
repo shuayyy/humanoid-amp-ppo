@@ -2,7 +2,7 @@ import torch
 from rsl_rl.env import VecEnv
 from tensordict import TensorDict
 
-from mjlab_g1.envs import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
+from mjlab.envs.manager_based_rl_env import ManagerBasedRlEnv, ManagerBasedRlEnvCfg
 from mjlab.utils.spaces import Space
 
 

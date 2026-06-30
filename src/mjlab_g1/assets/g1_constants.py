@@ -11,7 +11,6 @@ from mjlab.utils.actuator import (
   ElectricActuator,
   reflected_inertia_from_two_stage_planetary,
 )
-from mjlab.utils.os import update_assets
 from mjlab.utils.spec_config import CollisionCfg
 ##
 # MJCF and assets.
@@ -24,7 +23,10 @@ assert G1_XML.exists()
 
 def get_assets(meshdir: str) -> dict[str, bytes]:
   assets: dict[str, bytes] = {}
-  update_assets(assets, G1_XML.parent / "assets", meshdir)
+  asset_dir = G1_XML.parent / meshdir
+  for path in asset_dir.rglob("*"):
+    if path.is_file():
+      assets[str(path.relative_to(asset_dir))] = path.read_bytes()
   return assets
 
 

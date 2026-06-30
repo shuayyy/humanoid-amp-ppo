@@ -117,6 +117,9 @@ class G1LocomotionManagerBasedRlEnv(ManagerBasedRlEnv):
         self.episode_length_buf = torch.zeros(
             cfg.scene.num_envs, device=self.device, dtype=torch.long
         )
+        self._manual_reset_pending = torch.zeros(
+            cfg.scene.num_envs, device=self.device, dtype=torch.bool
+        )
         self.render_mode = render_mode
         self._offline_renderer: OffscreenRenderer | None = None
         if self.render_mode == "rgb_array":

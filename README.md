@@ -12,7 +12,7 @@ This repo includes a discriminator trained on human motion data retargeted to th
 - `src/mjlab_g1/`
   - task configs, envs, wrappers, viewers
 - `rsl_rl/`
-  - PPO and AMP-PPO code
+  - RSL-RL 5.2 with migrated AMP-PPO code
 - `dataset/`
   - AMP motion datasets
 
@@ -29,14 +29,16 @@ git clone --recurse-submodules https://github.com/shuayyy/humanoid-amp-ppo.git
 cd humanoid-amp-ppo
 
 uv sync
-uv pip install -e .
-uv pip install --no-deps -e third_party/defm
 ```
 
 Installed packages:
 
 * `mjlab-g1`
+* `rsl-rl-lib` from `rsl_rl`
 * `defm` from `third_party/defm`
+
+`uv sync` installs DeFM and its runtime dependencies. Do not install DeFM with
+`--no-deps`; dual-arm needs those dependencies for the depth encoder.
 
 ## Task IDs
 
@@ -50,13 +52,27 @@ Registered tasks:
 Locomotion:
 
 ```bash
-PYTHONPATH=src uv run python src/mjlab_g1/scripts/train.py Mjlab-G1-Locomotion
+MUJOCO_GL=egl PYTHONPATH=src uv run python src/mjlab_g1/scripts/train.py \
+Mjlab-G1-Locomotion \
+--video False
 ```
 
 Dual arm:
 
 ```bash
-PYTHONPATH=src uv run python src/mjlab_g1/scripts/train.py Mjlab-G1-DualArm
+MUJOCO_GL=egl PYTHONPATH=src uv run python src/mjlab_g1/scripts/train.py \
+Mjlab-G1-DualArm \
+--video False
+```
+
+Dual-arm uses a depth camera and frozen DeFM features. On smaller GPUs, reduce
+the environment count, for example:
+
+```bash
+MUJOCO_GL=egl PYTHONPATH=src uv run python src/mjlab_g1/scripts/train.py \
+Mjlab-G1-DualArm \
+--env.scene.num_envs 64 \
+--video False
 ```
 
 ## Play

@@ -2,8 +2,10 @@
 
 from mjlab_g1.rl import (
   RslRlOnPolicyRunnerCfg,
-  RslRlPpoActorCriticCfg,
+  RslRlGaussianDistributionCfg,
+  RslRlPpoActorCfg,
   RslRlPpoAlgorithmCfg,
+  RslRlPpoCriticCfg,
 )
 
 # Keep AMP imports commented for later use.
@@ -15,13 +17,20 @@ def unitree_g1_dualarm_ppo_runner_cfg() -> RslRlAMPOnPolicyRunnerCfg:
   """Create RL runner configuration for Unitree G1 dualarm task."""
   return RslRlAMPOnPolicyRunnerCfg(
   # return RslRlOnPolicyRunnerCfg(
-    policy=RslRlPpoActorCriticCfg(
-      init_noise_std=1.0,
-      actor_obs_normalization=True,
-      critic_obs_normalization=True,
-      actor_hidden_dims=(512, 256, 128),
-      critic_hidden_dims=(512, 256, 128, 64),
+    actor=RslRlPpoActorCfg(
+      hidden_dims=(512, 256, 128),
       activation="elu",
+      obs_normalization=True,
+      distribution_cfg=RslRlGaussianDistributionCfg(
+        init_std=1.0,
+        std_type="scalar",
+        learn_std=True,
+      ),
+    ),
+    critic=RslRlPpoCriticCfg(
+      hidden_dims=(512, 256, 128, 64),
+      activation="elu",
+      obs_normalization=True,
     ),
     algorithm=RslRlPpoAlgorithmCfg(
       value_loss_coef=1.0,
@@ -36,7 +45,7 @@ def unitree_g1_dualarm_ppo_runner_cfg() -> RslRlAMPOnPolicyRunnerCfg:
       lam=0.95,
       desired_kl=0.01,
       max_grad_norm=1.0,
-      class_name="AMP_PPO",
+      class_name="rsl_rl.algorithms:AMP_PPO",
       # class_name="PPO",
     ),
     experiment_name="g1_dualarm",

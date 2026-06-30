@@ -1,4 +1,5 @@
 """Task registry system for managing environment registration and creation."""
+from __future__ import annotations
 
 
 """MANAGERS - MJLAB BUILTIN MODULE
@@ -7,11 +8,14 @@ Managers are MJLab modules that handle separate parts of the env: actions, obser
 Your task config tells these managers what to compute for your specific task.
 
 """
+
 from copy import deepcopy
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
-from mjlab_g1.envs import ManagerBasedRlEnvCfg
-from mjlab_g1.rl import RslRlOnPolicyRunnerCfg
+if TYPE_CHECKING:
+  from mjlab.envs.manager_based_rl_env import ManagerBasedRlEnvCfg
+  from mjlab_g1.rl import RslRlOnPolicyRunnerCfg
 
 
 @dataclass
@@ -24,6 +28,12 @@ class _TaskCfg:
 
 # Private module-level registry: task_id -> task config.
 _REGISTRY: dict[str, _TaskCfg] = {}
+
+
+def _ensure_registered() -> None:
+  from mjlab_g1.tasks import register_tasks
+
+  register_tasks()
 
 
 def register_mjlab_task(
@@ -49,6 +59,7 @@ def register_mjlab_task(
 
 def list_tasks() -> list[str]:
   """List all registered task IDs."""
+  _ensure_registered()
   return sorted(_REGISTRY.keys())
 
 
@@ -57,6 +68,7 @@ def load_env_cfg(task_name: str, play: bool = False) -> ManagerBasedRlEnvCfg:
 
   Returns a deep copy to prevent mutation of the registered config.
   """
+  _ensure_registered()
   return deepcopy(
     _REGISTRY[task_name].env_cfg if not play else _REGISTRY[task_name].play_env_cfg
   )
@@ -67,6 +79,7 @@ def load_rl_cfg(task_name: str) -> RslRlOnPolicyRunnerCfg:
 
   Returns a deep copy to prevent mutation of the registered config.
   """
+  _ensure_registered()
   return deepcopy(_REGISTRY[task_name].rl_cfg)
 
 
@@ -75,4 +88,5 @@ def load_runner_cls(task_name: str) -> type | None:
 
   If None, the default OnPolicyRunner will be used.
   """
+  _ensure_registered()
   return _REGISTRY[task_name].runner_cls

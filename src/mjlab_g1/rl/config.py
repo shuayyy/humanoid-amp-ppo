@@ -5,25 +5,49 @@ from typing import Literal, Tuple
 
 
 @dataclass
-class RslRlPpoActorCriticCfg:
-  """Config for the PPO actor-critic networks."""
+class RslRlGaussianDistributionCfg:
+  """Config for the RSL-RL Gaussian action distribution."""
 
-  init_noise_std: float = 1.0
+  class_name: str = "rsl_rl.modules:GaussianDistribution"
+  """The distribution class name used by RSL-RL."""
+  init_std: float = 1.0
   """The initial noise standard deviation of the policy."""
-  noise_std_type: Literal["scalar", "log"] = "scalar"
+  std_type: Literal["scalar", "log"] = "scalar"
   """The type of noise standard deviation for the policy. Default is scalar."""
-  actor_obs_normalization: bool = False
-  """Whether to normalize the observation for the actor network. Default is False."""
-  critic_obs_normalization: bool = False
-  """Whether to normalize the observation for the critic network. Default is False."""
-  actor_hidden_dims: Tuple[int, ...] = (128, 128, 128)
+  learn_std: bool = True
+  """Whether the action standard deviation is learnable."""
+
+
+@dataclass
+class RslRlPpoActorCfg:
+  """Config for the PPO actor network."""
+
+  class_name: str = "rsl_rl.models:MLPModel"
+  """The actor model class name used by RSL-RL."""
+  hidden_dims: Tuple[int, ...] = (128, 128, 128)
   """The hidden dimensions of the actor network."""
-  critic_hidden_dims: Tuple[int, ...] = (128, 128, 128)
-  """The hidden dimensions of the critic network."""
   activation: str = "elu"
   """The activation function to use in the actor and critic networks."""
-  class_name: str = "ActorCritic"
-  """Ignore, required by RSL-RL."""
+  obs_normalization: bool = False
+  """Whether to normalize actor observations."""
+  distribution_cfg: RslRlGaussianDistributionCfg = field(
+    default_factory=RslRlGaussianDistributionCfg
+  )
+  """The stochastic action distribution configuration."""
+
+
+@dataclass
+class RslRlPpoCriticCfg:
+  """Config for the PPO critic network."""
+
+  class_name: str = "rsl_rl.models:MLPModel"
+  """The critic model class name used by RSL-RL."""
+  hidden_dims: Tuple[int, ...] = (128, 128, 128)
+  """The hidden dimensions of the critic network."""
+  activation: str = "elu"
+  """The activation function to use in the critic network."""
+  obs_normalization: bool = False
+  """Whether to normalize critic observations."""
 
 
 @dataclass
@@ -61,7 +85,7 @@ class RslRlPpoAlgorithmCfg:
   advantage is normalized over the mini-batches only. Otherwise, the advantage is
   normalized over the entire collected trajectories.
   """
-  class_name: str = "PPO"
+  class_name: str = "rsl_rl.algorithms:PPO"
   """Ignore, required by RSL-RL."""
 
 
@@ -74,7 +98,7 @@ class RslRlBaseRunnerCfg:
   max_iterations: int = 300
   """The maximum number of iterations."""
   obs_groups: dict[str, tuple[str, ...]] = field(
-    default_factory=lambda: {"policy": ("policy",), "critic": ("critic",)},
+    default_factory=lambda: {"actor": ("policy",), "critic": ("critic",)},
   )
   save_interval: int = 50
   """The number of iterations between saves."""
@@ -106,8 +130,10 @@ class RslRlBaseRunnerCfg:
 class RslRlOnPolicyRunnerCfg(RslRlBaseRunnerCfg):
   class_name: str = "OnPolicyRunner"
   """The runner class name. Default is OnPolicyRunner."""
-  policy: RslRlPpoActorCriticCfg = field(default_factory=RslRlPpoActorCriticCfg)
-  """The policy configuration."""
+  actor: RslRlPpoActorCfg = field(default_factory=RslRlPpoActorCfg)
+  """The actor configuration."""
+  critic: RslRlPpoCriticCfg = field(default_factory=RslRlPpoCriticCfg)
+  """The critic configuration."""
   algorithm: RslRlPpoAlgorithmCfg = field(default_factory=RslRlPpoAlgorithmCfg)
   """The algorithm configuration."""
 

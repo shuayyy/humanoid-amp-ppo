@@ -18,13 +18,8 @@ class LocomotionOnPolicyRunner(AMPOnPolicyRunner):
     if self.logger_type in ["wandb"]:
       policy_path = path.split("model")[0]
       filename = os.path.basename(os.path.dirname(policy_path)) + ".onnx"
-      if self.alg.policy.actor_obs_normalization:
-        normalizer = self.alg.policy.actor_obs_normalizer
-      else:
-        normalizer = None
       export_locomotion_policy_as_onnx(
-        self.alg.policy,
-        normalizer=normalizer,
+        self.alg.actor,
         path=policy_path,
         filename=filename,
       )

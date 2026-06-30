@@ -4,7 +4,7 @@ import onnx
 import torch
 
 from mjlab.entity import Entity
-from mjlab_g1.envs import ManagerBasedRlEnv
+from mjlab.envs.manager_based_rl_env import ManagerBasedRlEnv
 from mjlab.envs.mdp.actions import JointPositionAction
 
 

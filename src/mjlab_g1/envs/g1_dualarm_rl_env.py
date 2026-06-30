@@ -14,7 +14,6 @@ from mjlab.managers.reward_manager import RewardManager, RewardTermCfg
 from mjlab.scene import Scene
 from mjlab.sim.sim import Simulation
 from mjlab.tasks.manipulation.mdp.commands import LiftingCommand
-from mjlab_g1.perception.encoders import DeFMEncoder
 from mjlab.utils.logging import print_info
 from mjlab.viewer.offscreen_renderer import OffscreenRenderer
 _DESIRED_FRAME_COLORS = ((1.0, 0.5, 0.5), (0.5, 1.0, 0.5), (0.5, 0.5, 1.0))
@@ -40,10 +39,6 @@ class G1DualarmManagerBasedRlEnvCfg(ManagerBasedRlEnvCfg):
     lift_height_thresh: float = 0.8
     hold_steps: int = 20
     fall_angle_thresh: float = math.radians(70.0)
-    use_depth_obs: bool = True
-    depth_camera_name: str = "robot/realsense_d435_depth"
-    depth_height: int = 192
-    depth_width: int = 256
 
 
     """Whether in evaluation mode. If True, will save metrics to JSON and exit after all episodes complete."""
@@ -136,6 +131,9 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         self.episode_length_buf = torch.zeros(
             cfg.scene.num_envs, device=self.device, dtype=torch.long
         )
+        self._manual_reset_pending = torch.zeros(
+            cfg.scene.num_envs, device=self.device, dtype=torch.bool
+        )
         self.render_mode = render_mode
         self._offline_renderer: OffscreenRenderer | None = None
         if self.render_mode == "rgb_array":
@@ -169,6 +167,8 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         self.object_lift_target_pos_w = self.toaster.data.default_root_state[:, :3].clone()
         self.object_lift_target_pos_w += self.scene.env_origins
         self.object_lift_target_pos_w[:, 2] += self.cfg.lift_height_thresh
+
+        from mjlab_g1.perception.encoders import DeFMEncoder
 
         self.depth_encoder = DeFMEncoder(device=self.device)
 
