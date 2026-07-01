@@ -3,6 +3,33 @@ from __future__ import annotations
 import torch
 
 
+def _validate_schedule_start_and_order(
+    schedule,
+    name: str,
+) -> None:
+    if len(schedule) == 0:
+        raise ValueError(f"{name} must not be empty.")
+    if schedule[0][0] != 0:
+        raise ValueError(f"{name} first stage must start at 0.")
+
+    previous_step = -1
+    for stage in schedule:
+        start_step = stage[0]
+        if start_step <= previous_step:
+            raise ValueError(f"{name} steps must be strictly ascending.")
+        previous_step = start_step
+
+
+def _select_stage(schedule, common_step_counter: int):
+    selected_stage = schedule[0]
+    for stage in schedule:
+        if common_step_counter >= stage[0]:
+            selected_stage = stage
+        else:
+            break
+    return selected_stage
+
+
 def virtual_pd_assistance_curriculum(
     env,
     env_ids: torch.Tensor,
@@ -16,32 +43,98 @@ def virtual_pd_assistance_curriculum(
     del env_ids
 
     schedule = env.cfg.virtual_pd_curriculum_schedule
-    if len(schedule) == 0:
-        raise ValueError("virtual_pd_curriculum_schedule must not be empty.")
-    if schedule[0][0] != 0:
-        raise ValueError("virtual_pd_curriculum_schedule first stage must start at 0.")
+    _validate_schedule_start_and_order(
+        schedule,
+        "virtual_pd_curriculum_schedule",
+    )
 
-    previous_step = -1
-    selected_scale = schedule[0][1]
-    for start_step, scale in schedule:
-        if start_step <= previous_step:
-            raise ValueError(
-                "virtual_pd_curriculum_schedule steps must be strictly ascending."
-            )
+    for _, scale in schedule:
         if not 0.0 <= scale <= 1.0:
             raise ValueError(
                 "virtual_pd_curriculum_schedule scales must be in [0.0, 1.0]."
             )
 
-        previous_step = start_step
-        if env.common_step_counter >= start_step:
-            selected_scale = scale
-        else:
-            break
+    _, selected_scale = _select_stage(schedule, env.common_step_counter)
 
     env.virtual_pd_assistance_scale = float(selected_scale)
     return torch.tensor(
         selected_scale,
+        device=env.device,
+        dtype=torch.float32,
+    )
+
+
+def feet_slip_curriculum(
+    env,
+    env_ids: torch.Tensor,
+) -> dict[str, torch.Tensor]:
+    """
+    Step schedule for foot-slip penalty strength and deadzone.
+    """
+    del env_ids
+
+    schedule = env.cfg.feet_slip_curriculum_schedule
+    _validate_schedule_start_and_order(schedule, "feet_slip_curriculum_schedule")
+
+    for _, weight, threshold_min in schedule:
+        if weight > 0.0:
+            raise ValueError("feet_slip_curriculum_schedule weights must be <= 0.0.")
+        if threshold_min < 0.0:
+            raise ValueError(
+                "feet_slip_curriculum_schedule thresholds must be non-negative."
+            )
+
+    _, selected_weight, selected_threshold_min = _select_stage(
+        schedule,
+        env.common_step_counter,
+    )
+
+    term_cfg = env.dualarm_reward_manager.get_term_cfg("feet_slip")
+    term_cfg.weight = float(selected_weight)
+    term_cfg.params["threshold_min"] = float(selected_threshold_min)
+
+    return {
+        "weight": torch.tensor(
+            selected_weight,
+            device=env.device,
+            dtype=torch.float32,
+        ),
+        "threshold_min": torch.tensor(
+            selected_threshold_min,
+            device=env.device,
+            dtype=torch.float32,
+        ),
+    }
+
+
+def missing_grasp_curriculum(
+    env,
+    env_ids: torch.Tensor,
+) -> torch.Tensor:
+    """
+    Step schedule for the missing-grasp penalty during trajectory lift.
+    """
+    del env_ids
+
+    schedule = env.cfg.missing_grasp_curriculum_schedule
+    _validate_schedule_start_and_order(
+        schedule,
+        "missing_grasp_curriculum_schedule",
+    )
+
+    for _, weight in schedule:
+        if weight > 0.0:
+            raise ValueError(
+                "missing_grasp_curriculum_schedule weights must be <= 0.0."
+            )
+
+    _, selected_weight = _select_stage(schedule, env.common_step_counter)
+
+    term_cfg = env.dualarm_reward_manager.get_term_cfg("missing_grasp_during_lift")
+    term_cfg.weight = float(selected_weight)
+
+    return torch.tensor(
+        selected_weight,
         device=env.device,
         dtype=torch.float32,
     )

@@ -229,8 +229,8 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
         ),
         "feet_slip": RewardTermCfg(
             func=mdp.feet_slip,
-            weight=-2.0,
-            params={"threshold_min": 0.03},
+            weight=-0.5,
+            params={"threshold_min": 0.05},
         ),
         # "linear_vel_penalty": RewardTermCfg(
         #     func=mdp.linear_vel_penalty,
@@ -277,7 +277,7 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
         ),
         "missing_grasp_during_lift": RewardTermCfg(
             func=mdp.missing_grasp_during_lift,
-            weight=-0.5,
+            weight=0.0,
             params={
                 "left_sensor": "left_hand_toaster_contact",
                 "right_sensor": "right_hand_toaster_contact",
@@ -345,6 +345,12 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
     curriculum = {
         "virtual_pd_assistance": CurriculumTermCfg(
             func=mdp.virtual_pd_assistance_curriculum,
+        ),
+        "feet_slip": CurriculumTermCfg(
+            func=mdp.feet_slip_curriculum,
+        ),
+        "missing_grasp": CurriculumTermCfg(
+            func=mdp.missing_grasp_curriculum,
         ),
     }
 
