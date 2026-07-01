@@ -243,28 +243,3 @@ for a in G1_ARTICULATION.actuators:
   assert e is not None
   for n in names:
     G1_29Dof_ACTION_SCALE[n] = 0.25 * e / s
-
-
-if __name__ == "__main__":
-  import mujoco.viewer as viewer
-
-  from mjlab.entity.entity import Entity
-  from mjlab.scene import SceneCfg, Scene
-  from mjlab.terrains import TerrainImporterCfg
-  from mjlab_g1.assets.toaster_constants import (
-    get_toaster_cfg,
-  )
-
-  robot = Entity(get_g1_29dof_robot_cfg())
-  viewer.launch(robot.spec.compile())
-
-  toaster = Entity(get_toaster_cfg())
-  viewer.launch(toaster.spec.compile())
-
-  SCENE_CFG = SceneCfg(
-        terrain=TerrainImporterCfg(terrain_type="plane"),
-        entities={"robot": get_g1_29dof_robot_cfg(), "toaster": get_toaster_cfg()},
-    )
-
-  scene = Scene(SCENE_CFG, device="cuda:0")
-  scene.to_zip(Path("scene.zip"))

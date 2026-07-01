@@ -130,5 +130,8 @@ def unitree_g1_locomotion_env_cfg(play: bool = False) -> G1LocomotionManagerBase
       "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
     }
     cfg.events.pop("push_robot", None)
+    # Viser velocity sliders require a non-zero max value.
+    cfg.commands["gostraight"].ranges.lin_vel_y = (-0.1, 0.1)
+    cfg.commands["gostraight"].ranges.ang_vel_z = (-0.1, 0.1)
 
   return cfg

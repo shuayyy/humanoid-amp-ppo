@@ -77,12 +77,17 @@ Mjlab-G1-DualArm \
 
 ## Play
 
+Bundled checkpoints:
+
+- `models/locomotion.pt`
+- `models/dual_arm.pt`
+
 Locomotion:
 
 ```bash
 PYTHONPATH=src uv run python src/mjlab_g1/scripts/play.py \
 Mjlab-G1-Locomotion \
---checkpoint-file /path/to/model.pt
+--checkpoint-file models/locomotion.pt
 ```
 
 Dual arm:
@@ -90,7 +95,7 @@ Dual arm:
 ```bash
 PYTHONPATH=src uv run python src/mjlab_g1/scripts/play.py \
 Mjlab-G1-DualArm \
---checkpoint-file /path/to/model.pt
+--checkpoint-file models/dual_arm.pt
 ```
 
 ## AMP datasets
@@ -99,20 +104,6 @@ Current task-specific AMP dataset paths:
 
 - locomotion: `dataset/locomotion`
 - dualarm: `dataset/dualarm`
-
-## Utilities
-
-View the robot and toaster at their init poses:
-
-```bash
-PYTHONPATH=src uv run python src/mjlab_g1/test/view_g1_toaster_init.py
-```
-
-View qpos motion clips:
-
-```bash
-PYTHONPATH=src uv run python src/mjlab_g1/test/view_qpos_29dof.py dataset/some_clip.npy
-```
 
 ## Notes
 

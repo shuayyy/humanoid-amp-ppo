@@ -76,7 +76,6 @@ class G1_AMPLoader:
         self.trajectory_frame_durations = []
         self.trajectory_num_frames = []
         self.motion_dir = motion_files
-        # import ipdb; ipdb.set_trace()
         for i, motion_file in enumerate(os.listdir(motion_files)):
             self.trajectory_names.append(motion_file)
             motion_path = pjoin(motion_files, motion_file)
@@ -276,7 +275,6 @@ class G1_AMPLoader:
         # tar_toe_pos_0, tar_toe_pos_1 = G1_AMPLoader.get_tar_toe_pos_local(frame0), G1_AMPLoader.get_tar_toe_pos_local(frame1)
         linear_vel_0, linear_vel_1 = G1_AMPLoader.get_linear_vel(frame0), G1_AMPLoader.get_linear_vel(frame1)
         angular_vel_0, angular_vel_1 = G1_AMPLoader.get_angular_vel(frame0), G1_AMPLoader.get_angular_vel(frame1)
-        joint_vel_0, joint_vel_1 = G1_AMPLoader.get_joint_vel(frame0), G1_AMPLoader.get_joint_vel(frame1)
 
         blend_root_pos = self.slerp(root_pos0, root_pos1, blend)
         blend_root_rot = transformations.quaternion_slerp(root_rot0.cpu().numpy(), root_rot1.cpu().numpy(), blend)
@@ -285,16 +283,11 @@ class G1_AMPLoader:
         # blend_tar_toe_pos = self.slerp(tar_toe_pos_0, tar_toe_pos_1, blend)
         blend_linear_vel = self.slerp(linear_vel_0, linear_vel_1, blend)
         blend_angular_vel = self.slerp(angular_vel_0, angular_vel_1, blend)
-        blend_joints_vel = self.slerp(joint_vel_0, joint_vel_1, blend)
 
-        # return
-        #  torch.cat([
-        #     blend_root_pos, blend_root_rot, blend_linear_vel, blend_angular_vel, blend_joints, blend_joints_vel])
         return torch.cat([blend_root_pos, blend_root_rot, blend_linear_vel, blend_angular_vel, blend_joints])
     
     def feed_forward_generator_29dof_multi(self, num_mini_batch, mini_batch_size): 
         """Generates a batch of AMP transitions."""
-        # import ipdb; ipdb.set_trace()
         for _ in range(num_mini_batch):
             if self.preload_transitions:
                 idxs = np.random.choice(self.preloaded_s.shape[0], size=mini_batch_size)
@@ -308,47 +301,6 @@ class G1_AMPLoader:
                 NotImplementedError('preload transition')
             yield torch.stack(frames, dim=1)    # [batch, num_frames, 16]
 
-
-
-
-    def quaternion_to_euler_array(self, quat):
-    # Ensure quaternion is in the correct format [x, y, z, w]
-        x, y, z, w =quat
-        
-        # Roll (x-axis rotation)
-        t0 = +2.0 * (w * x + y * z)
-        t1 = +1.0 - 2.0 * (x * x + y * y)
-        roll_x = np.arctan2(t0, t1)
-        
-        # Pitch (y-axis rotation)
-        t2 = +2.0 * (w * y - z * x)
-        t2 = np.clip(t2, -1.0, 1.0)
-        pitch_y = np.arcsin(t2)
-        
-        # Yaw (z-axis rotation)
-        t3 = +2.0 * (w * z + x * y)
-        t4 = +1.0 - 2.0 * (y * y + z * z)
-        yaw_z = np.arctan2(t3, t4)
-        
-        # Returns roll, pitch, yaw in a NumPy array in radians
-        return np.array([roll_x, pitch_y, yaw_z])   
-
-    def euler_to_quaternion(self, root_rot):
-        roll, pitch, yaw = root_rot[0], root_rot[1], root_rot[2]
-        cy = np.cos(yaw * 0.5)
-        sy = np.sin(yaw * 0.5)
-        cp = np.cos(pitch * 0.5)
-        sp = np.sin(pitch * 0.5)
-        cr = np.cos(roll * 0.5)
-        sr = np.sin(roll * 0.5)
-
-        qw = cy * cp * cr + sy * sp * sr
-        qx = cy * cp * sr - sy * sp * cr
-        qy = sy * cp * sr + cy * sp * cr
-        qz = sy * cp * cr - cy * sp * sr
-
-        return np.array([qx, qy, qz, qw])
-    
     @property
     def observation_dim(self):
         """Size of AMP observations."""

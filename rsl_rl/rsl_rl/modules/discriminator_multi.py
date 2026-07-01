@@ -74,7 +74,6 @@ class DiscriminatorMulti(nn.Module):
             states: torch.Tensor, shape=(num_envs, num_frames, state_dim)
             task_reward: torch.Tensor, shape=(num_envs, 1)
         """
-        # import ipdb; ipdb.set_trace()
         with torch.no_grad():
             self.eval()
             if normalizer is not None:
@@ -90,12 +89,12 @@ class DiscriminatorMulti(nn.Module):
                 if self.task_reward_lerp > 0:
                     reward = self._lerp_reward(disc_reward, task_reward.unsqueeze(-1))
                 self.train()
-                return reward.squeeze(), d, disc_reward.squeeze() * (1.0 - self.task_reward_lerp)
+                return reward.squeeze(-1), d, disc_reward.squeeze(-1) * (1.0 - self.task_reward_lerp)
             else:
                 disc_reward *= 0.02
                 reward = task_reward.unsqueeze(-1) + disc_reward
                 self.train()
-                return reward.squeeze(), d, disc_reward.squeeze()
+                return reward.squeeze(-1), d, disc_reward.squeeze(-1)
 
     def _lerp_reward(self, disc_r, task_r):
         r = (1.0 - self.task_reward_lerp) * disc_r + self.task_reward_lerp * task_r
