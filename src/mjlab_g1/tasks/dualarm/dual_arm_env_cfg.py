@@ -7,6 +7,7 @@ from mjlab_g1.envs.g1_dualarm_rl_env import G1DualarmManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers.action_manager import ActionTermCfg
 from mjlab.managers.command_manager import CommandTermCfg
+from mjlab.managers.curriculum_manager import CurriculumTermCfg
 from mjlab.managers.event_manager import EventTermCfg
 from mjlab.managers.observation_manager import ObservationGroupCfg, ObservationTermCfg
 from mjlab.managers.reward_manager import RewardTermCfg
@@ -16,6 +17,7 @@ from mjlab.tasks.manipulation.mdp.commands import LiftingCommandCfg
 from mjlab.scene import SceneCfg
 from mjlab.sim import MujocoCfg, SimulationCfg
 from mjlab_g1.tasks.dualarm import mdp
+from mjlab_g1.tasks.dualarm.virtual_object_pd import VirtualObjectPdCfg
 from mjlab.terrains import TerrainEntityCfg
 from mjlab.utils.noise import UniformNoiseCfg as Unoise
 from mjlab.viewer import ViewerConfig
@@ -59,7 +61,9 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
         "right_grasp_marker": ObservationTermCfg(
             func=mdp.right_grasp_marker_pos,
         ),
-        "place_pos": ObservationTermCfg(func=mdp.place_pos),
+        "trajectory_reference_pos": ObservationTermCfg(
+            func=mdp.trajectory_reference_pos,
+        ),
         "depth_features": ObservationTermCfg(
             func=mdp.get_depth_features,
         ),
@@ -120,7 +124,7 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
             target_position_range=LiftingCommandCfg.TargetPositionRangeCfg(
                 x=(0.0, 0.0),
                 y=(0.0, 0.0),
-                z=(0.585, 0.585),
+                z=(0.750, 0.750),
             ),
             object_pose_range=None,
         )
@@ -225,8 +229,8 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
         ),
         "feet_slip": RewardTermCfg(
             func=mdp.feet_slip,
-            weight=-0.5,
-            params={"threshold_min": 0.05},
+            weight=-2.0,
+            params={"threshold_min": 0.03},
         ),
         # "linear_vel_penalty": RewardTermCfg(
         #     func=mdp.linear_vel_penalty,
@@ -262,15 +266,21 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
             weight=5.0,
             params={"d_scale": 1.0},
         ),
-        "lift": RewardTermCfg(
-            func=mdp.lift,
+        "object_trajectory_tracking": RewardTermCfg(
+            func=mdp.object_trajectory_tracking,
             weight=10.0,
             params={
                 "left_sensor": "left_hand_toaster_contact",
                 "right_sensor": "right_hand_toaster_contact",
                 "position_tolerance": 0.075,
-                "min_reward_time_s": 1.5,
-                "early_lift_penalty": -1.0,
+            },
+        ),
+        "missing_grasp_during_lift": RewardTermCfg(
+            func=mdp.missing_grasp_during_lift,
+            weight=-0.5,
+            params={
+                "left_sensor": "left_hand_toaster_contact",
+                "right_sensor": "right_hand_toaster_contact",
             },
         ),
         "feet_contact": RewardTermCfg(
@@ -332,7 +342,11 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
     # Curriculum
     ##
 
-    curriculum = {}
+    curriculum = {
+        "virtual_pd_assistance": CurriculumTermCfg(
+            func=mdp.virtual_pd_assistance_curriculum,
+        ),
+    }
 
     ##
     # Assemble and return
@@ -355,6 +369,16 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
         curriculum=curriculum,
         dualarm_rewards=dualarm_rewards,
         regularization_rewards=regularization_rewards,
+        virtual_pd_cfg=VirtualObjectPdCfg(
+            enabled=True,
+            scale=1.0,
+            kp_pos=800.0,
+            kd_pos=50.0,
+            max_force=80.0,
+            kp_rot=4.0,
+            kd_rot=0.75,
+            max_torque=4.0,
+        ),
         viewer=ViewerConfig(
             origin_type=ViewerConfig.OriginType.ASSET_BODY,
             entity_name="robot",

@@ -4,7 +4,6 @@ from typing import TYPE_CHECKING
 
 import torch
 from mjlab.sensor import ContactSensor
-from mjlab.tasks.manipulation.mdp.commands import LiftingCommand
 if TYPE_CHECKING:
   from mjlab_g1.envs.g1_dualarm_rl_env import G1DualarmManagerBasedRlEnv
 
@@ -100,54 +99,67 @@ def marker_force(
   return force_reward * both_contact.float() * reward_enabled.float()
 
 
-def lift(
+def object_trajectory_tracking(
   env: G1DualarmManagerBasedRlEnv,
   left_sensor: str,
   right_sensor: str,
   position_tolerance: float = 0.075,
-  command_name: str = "place_pos",
-  min_reward_time_s: float = 2.5,
-  early_lift_penalty: float = -1.0,
 ) -> torch.Tensor:
+  """
+  Reward toaster position tracking along the analytic trajectory.
+
+  The reward is gated by both grasp-marker contacts so the virtual object
+  controller cannot create reward by moving the toaster without a real grasp.
+  """
   left_contact_sensor: ContactSensor = env.scene[left_sensor]
   right_contact_sensor: ContactSensor = env.scene[right_sensor]
+
   assert left_contact_sensor.data.found is not None
   assert right_contact_sensor.data.found is not None
 
   left_contact = torch.any(left_contact_sensor.data.found > 0, dim=-1)
   right_contact = torch.any(right_contact_sensor.data.found > 0, dim=-1)
   both_contact = left_contact & right_contact
-  if not torch.any(both_contact):
-    return torch.zeros(env.num_envs, device=env.device)
 
-  command = env.command_manager.get_term(command_name)
-  if not isinstance(command, LiftingCommand):
-    raise TypeError(
-      f"Command '{command_name}' must be a LiftingCommand, got {type(command)}"
-    )
+  reference_pos_w, _ = env.get_object_trajectory_reference()
+  object_pos_w = env.toaster.data.root_link_pos_w[:, :3]
 
-  obj_pose = get_object_pose(env)
-  obj_pos = obj_pose[:, :3]
-  target_pos = command.target_pos
+  position_error = torch.linalg.vector_norm(
+    object_pos_w - reference_pos_w,
+    dim=-1,
+  )
 
-  position_error = torch.norm(obj_pos - target_pos, dim=-1)
-  reward = torch.exp(
+  tracking_reward = torch.exp(
     -position_error / max(position_tolerance, 1.0e-6)
   )
-  reward = torch.where(
-    position_error <= position_tolerance,
-    torch.ones_like(reward),
-    reward,
-  )
+
+  return tracking_reward * both_contact.float()
+
+
+def missing_grasp_during_lift(
+  env: G1DualarmManagerBasedRlEnv,
+  left_sensor: str,
+  right_sensor: str,
+) -> torch.Tensor:
+  """Penalty indicator when the trajectory is moving but both marker contacts are absent."""
+  left_contact_sensor: ContactSensor = env.scene[left_sensor]
+  right_contact_sensor: ContactSensor = env.scene[right_sensor]
+
+  assert left_contact_sensor.data.found is not None
+  assert right_contact_sensor.data.found is not None
+
+  left_contact = torch.any(left_contact_sensor.data.found > 0, dim=-1)
+  right_contact = torch.any(right_contact_sensor.data.found > 0, dim=-1)
+  both_contact = left_contact & right_contact
 
   elapsed_s = env.episode_length_buf.float() * env.step_dt
-  reward_enabled = elapsed_s >= min_reward_time_s
-  lifted_early = both_contact & env._object_lifted() & (~reward_enabled)
+  lift_moving = (
+    (elapsed_s >= env.cfg.trajectory_start_s)
+    & (elapsed_s <= env.cfg.trajectory_end_s)
+  )
 
-  gated_reward = reward * both_contact.float() * reward_enabled.float()
-  early_penalty = lifted_early.float() * early_lift_penalty
-  return gated_reward + early_penalty
-  
+  return ((~both_contact) & lift_moving).float()
+
 #### Stability  rewards ####
 
 

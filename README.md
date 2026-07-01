@@ -1,11 +1,15 @@
 # humanoid-amp-ppo
 
-AMP-based humanoid RL training for the following tasks:
+AMP-based humanoid RL training for tasks:
 
 - `Mjlab-G1-Locomotion`
 - `Mjlab-G1-DualArm`
 
-This repo includes a discriminator trained on human motion data retargeted to the Unitree G1 humanoid, and uses it to train RL policies with fewer task-specific rewards while encouraging more human-like behavior.
+An AMP discriminator is trained on human motion data to help the humanoid RL policy learn with fewer task-specific rewards while encouraging more human-like behavior.
+
+## Locomotion policy:
+
+<video src="assets/locomotion.mp4" controls width="720"></video>
 
 ## Codebase Structure
 

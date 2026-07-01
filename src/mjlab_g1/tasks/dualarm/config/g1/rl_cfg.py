@@ -49,7 +49,7 @@ def unitree_g1_dualarm_ppo_runner_cfg() -> RslRlAMPOnPolicyRunnerCfg:
       # class_name="PPO",
     ),
     experiment_name="g1_dualarm",
-    amp_reward_coef=15.0,
+    amp_reward_coef=5.0,
     amp_motion_files="dataset/dualarm",
     save_interval=50,
     num_steps_per_env=24,

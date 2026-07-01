@@ -16,6 +16,10 @@ from mjlab.sim.sim import Simulation
 from mjlab.tasks.manipulation.mdp.commands import LiftingCommand
 from mjlab.utils.logging import print_info
 from mjlab.viewer.offscreen_renderer import OffscreenRenderer
+from mjlab_g1.tasks.dualarm.virtual_object_pd import (
+    VirtualObjectPdCfg,
+    VirtualObjectPdController,
+)
 _DESIRED_FRAME_COLORS = ((1.0, 0.5, 0.5), (0.5, 1.0, 0.5), (0.5, 0.5, 1.0))
 
 # dataclass auto-generates init/printing for config classes.
@@ -36,9 +40,20 @@ class G1DualarmManagerBasedRlEnvCfg(ManagerBasedRlEnvCfg):
     # field(default_factory=dict/list) creates a fresh empty dict/list for every config object.
     # This avoids different config objects accidentally sharing the same mutable default.
 
-    lift_height_thresh: float = 0.8
+    trajectory_start_s: float = 1.5
+    trajectory_end_s: float = 3.5
+    trajectory_lift_delta_z: float = 0.625
+    trajectory_position_tolerance: float = 0.115
     hold_steps: int = 20
     fall_angle_thresh: float = math.radians(70.0)
+    virtual_pd_cfg: VirtualObjectPdCfg = field(default_factory=VirtualObjectPdCfg)
+    virtual_pd_curriculum_schedule: tuple[tuple[int, float], ...] = (
+        (0, 1.0),
+        (187_500, 0.75),
+        (375_000, 0.50),
+        (562_500, 0.25),
+        (750_000, 0.0),
+    )
 
 
     """Whether in evaluation mode. If True, will save metrics to JSON and exit after all episodes complete."""
@@ -126,6 +141,16 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         self.object = self.scene["toaster"]
         self.toaster = self.object
         self._init_buffers()
+        self.virtual_pd_assistance_scale = float(
+            self.cfg.virtual_pd_curriculum_schedule[0][1]
+        )
+
+        self.virtual_pd_controller = VirtualObjectPdController(
+            toaster=self.toaster,
+            object_body_ids=self.object_body_ids,
+            grasp_site_ids=self.grasp_site_ids,
+            cfg=self.cfg.virtual_pd_cfg,
+        )
 
         self.common_step_counter = 0
         self.episode_length_buf = torch.zeros(
@@ -164,9 +189,13 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
             device=self.device,
             requires_grad=False,
         )
-        self.object_lift_target_pos_w = self.toaster.data.default_root_state[:, :3].clone()
-        self.object_lift_target_pos_w += self.scene.env_origins
-        self.object_lift_target_pos_w[:, 2] += self.cfg.lift_height_thresh
+        self.trajectory_start_pos_w = (
+            self.toaster.data.default_root_state[:, :3].clone()
+            + self.scene.env_origins
+        )
+
+        self.trajectory_goal_pos_w = self.trajectory_start_pos_w.clone()
+        self.trajectory_goal_pos_w[:, 2] += self.cfg.trajectory_lift_delta_z
 
         from mjlab_g1.perception.encoders import DeFMEncoder
 
@@ -230,6 +259,12 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
             name_keys=["left_grasp_marker", "right_grasp_marker"],
             preserve_order=True,
         )
+        self.object_body_ids, _ = self.toaster.find_bodies(
+            name_keys=["object"],
+            preserve_order=True,
+        )
+        assert len(self.object_body_ids) == 1
+        assert len(self.grasp_site_ids) == 2
         self.left_foot_site_ids, _ = self.robot.find_sites(name_keys=["left_foot_1", "left_foot_2", "left_foot_3", "left_foot_4"], preserve_order=True)
         self.right_foot_site_ids, _ = self.robot.find_sites(name_keys=["right_foot_1", "right_foot_2", "right_foot_3", "right_foot_4"], preserve_order=True)
 
@@ -259,12 +294,14 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
             self._sim_step_counter += 1
             self.action_manager.apply_action()
             self.scene.write_data_to_sim()
+            self._apply_virtual_pd_assistance()
         
             self.sim.step()
             self.scene.update(dt=self.physics_dt)
 
         self.episode_length_buf += 1
         self.common_step_counter += 1
+        self.curriculum_manager.compute()
 
         self.reset_buf = self.termination_manager.compute()
         self.reset_terminated = self.termination_manager.terminated
@@ -318,8 +355,16 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         toaster_root_state = self.toaster.data.default_root_state[env_ids].clone()
         toaster_root_state[:, :3] += env_origins
         self.toaster.write_root_state_to_sim(toaster_root_state, env_ids)
-        self.object_lift_target_pos_w[env_ids] = toaster_root_state[:, :3]
-        self.object_lift_target_pos_w[env_ids, 2] += self.cfg.lift_height_thresh
+        assert self.virtual_pd_controller is not None
+        self.virtual_pd_controller.reset(
+            env_ids=env_ids,
+            reference_quat_w=toaster_root_state[:, 3:7],
+        )
+        self.virtual_pd_controller.clear(env_ids)
+        self.trajectory_start_pos_w[env_ids] = toaster_root_state[:, :3]
+
+        self.trajectory_goal_pos_w[env_ids] = toaster_root_state[:, :3]
+        self.trajectory_goal_pos_w[env_ids, 2] += self.cfg.trajectory_lift_delta_z
         self._sync_place_pos_command_xy(env_ids)
 
         info = self.dualarm_reward_manager.reset(env_ids)
@@ -341,6 +386,87 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
 
         return grasp_pos - hand_pos
 
+    def get_object_trajectory_reference(
+        self,
+        time_s: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, torch.Tensor]:
+        """
+        Analytic reference for:
+          hold at initial toaster position
+          -> smooth vertical lift
+          -> hold at final position.
+
+        Returns:
+          reference_position_w: [num_envs, 3]
+          reference_velocity_w: [num_envs, 3]
+        """
+        if time_s is None:
+            time_s = self.episode_length_buf.float() * self.step_dt
+
+        if time_s.ndim == 0:
+            time_s = time_s.expand(self.num_envs)
+
+        assert time_s.shape == (self.num_envs,), time_s.shape
+
+        start_s = self.cfg.trajectory_start_s
+        end_s = self.cfg.trajectory_end_s
+        duration_s = end_s - start_s
+
+        if duration_s <= 0.0:
+            raise ValueError(
+                f"trajectory_end_s ({end_s}) must be larger than "
+                f"trajectory_start_s ({start_s})."
+            )
+
+        # u = 0 before lift begins; u = 1 after lift finishes.
+        u = ((time_s - start_s) / duration_s).clamp(0.0, 1.0)
+
+        # Smoothstep: zero velocity at trajectory start and end.
+        smooth_u = 3.0 * u.square() - 2.0 * u.pow(3)
+        smooth_du_dt = (6.0 * u - 6.0 * u.square()) / duration_s
+
+        delta_pos_w = self.trajectory_goal_pos_w - self.trajectory_start_pos_w
+
+        reference_position_w = (
+            self.trajectory_start_pos_w
+            + smooth_u.unsqueeze(-1) * delta_pos_w
+        )
+
+        reference_velocity_w = (
+            smooth_du_dt.unsqueeze(-1) * delta_pos_w
+        )
+
+        return reference_position_w, reference_velocity_w
+
+    def _apply_virtual_pd_assistance(self) -> None:
+        """
+        Physics-substep virtual-PD hook gated by bilateral grasp-marker contact.
+        """
+        assert self.virtual_pd_controller is not None
+
+        reference_pos_w, reference_vel_w = self.get_object_trajectory_reference()
+
+        left_sensor = self.scene["left_hand_toaster_contact"]
+        right_sensor = self.scene["right_hand_toaster_contact"]
+
+        assert left_sensor.data.found is not None
+        assert right_sensor.data.found is not None
+
+        left_contact = torch.any(left_sensor.data.found > 0, dim=-1)
+        right_contact = torch.any(right_sensor.data.found > 0, dim=-1)
+        bilateral_contact = left_contact & right_contact
+
+        assistance_scale = (
+            self.virtual_pd_assistance_scale
+            * bilateral_contact.float()
+        )
+
+        self.virtual_pd_controller.apply(
+            reference_pos_w,
+            reference_vel_w,
+            assistance_scale,
+        )
+
     def _sync_place_pos_command_xy(
         self, env_ids: torch.Tensor | None = None
     ) -> None:
@@ -357,9 +483,13 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
             ]
 
     def _object_lifted(self) -> torch.Tensor:
-        """Return whether the toaster has been lifted past the configured height threshold."""
+        """Return whether toaster reached the final trajectory lift height."""
         toaster_z = self.toaster.data.root_link_pos_w[:, 2]
-        return toaster_z > self.object_lift_target_pos_w[:, 2]
+        required_z = (
+            self.trajectory_goal_pos_w[:, 2]
+            - self.cfg.trajectory_position_tolerance
+        )
+        return toaster_z >= required_z
 
     def get_amp_observations(self):
         return self.robot.data.joint_pos

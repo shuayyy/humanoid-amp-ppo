@@ -33,8 +33,10 @@ DEBUG.md
 REWARD.md
 REWARD.md
 DEBUG.md
-test_scene/
+test/*
+!test/play_dataset.py
 .vscode/
 TODO.md
 vision.md
 rsl_rl_old/
+AMP_TODO.md

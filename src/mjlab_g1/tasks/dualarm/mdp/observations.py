@@ -5,7 +5,6 @@ from typing import TYPE_CHECKING
 import torch
 
 from mjlab.sensor import ContactSensor
-from mjlab.tasks.manipulation.mdp.commands import LiftingCommand
 
 if TYPE_CHECKING:
   from mjlab_g1.envs.g1_dualarm_rl_env import G1DualarmManagerBasedRlEnv
@@ -99,17 +98,16 @@ def right_grasp_marker_pos(env: G1DualarmManagerBasedRlEnv) -> torch.Tensor:
     marker_rel_w = marker_pos_w - base_pos_w
     return quat_apply_inverse(base_quat_w, marker_rel_w)
 
-def place_pos(env: G1DualarmManagerBasedRlEnv) -> torch.Tensor:
-    command = env.command_manager.get_term("place_pos")
-    if not isinstance(command, LiftingCommand):
-        raise TypeError(
-            f"Command 'place_pos' must be a LiftingCommand, got {type(command)}"
-        )
-    target_pos_w = command.target_pos
+def trajectory_reference_pos(
+    env: G1DualarmManagerBasedRlEnv,
+) -> torch.Tensor:
+    """
+    Current reference toaster position expressed in the robot base frame.
+    """
+    reference_pos_w, _ = env.get_object_trajectory_reference()
+
     base_pos_w = env.robot.data.root_link_pos_w[:, :3]
     base_quat_w = env.robot.data.root_link_quat_w
 
-    target_rel_w = target_pos_w - base_pos_w
-    return quat_apply_inverse(base_quat_w, target_rel_w)
-
-    
+    reference_rel_w = reference_pos_w - base_pos_w
+    return quat_apply_inverse(base_quat_w, reference_rel_w)
