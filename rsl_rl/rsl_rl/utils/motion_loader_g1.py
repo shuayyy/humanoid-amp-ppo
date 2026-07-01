@@ -11,40 +11,70 @@ from pybullet_utils import transformations
 from rsl_rl.utils import motion_util
 
 _EPS = np.finfo(float).eps * 4.0
+
+
+def normalize_quat_wxyz(q: torch.Tensor) -> torch.Tensor:
+    return q / torch.linalg.norm(q, dim=-1, keepdim=True).clamp_min(1.0e-8)
+
+
 def quaternion_slerp(q0, q1, fraction, spin=0, shortestpath=True):
     """Batch quaternion spherical linear interpolation."""
+    q0 = normalize_quat_wxyz(q0)
+    q1 = normalize_quat_wxyz(q1)
 
-    out = torch.zeros_like(q0)
-
-    zero_mask = torch.isclose(fraction, torch.zeros_like(fraction)).squeeze()
-    ones_mask = torch.isclose(fraction, torch.ones_like(fraction)).squeeze()
-    out[zero_mask] = q0[zero_mask]
-    out[ones_mask] = q1[ones_mask]
-
-    d = torch.sum(q0 * q1, dim=-1, keepdim=True)
-    dist_mask = (torch.abs(torch.abs(d) - 1.0) < _EPS).squeeze()
-    out[dist_mask] = q0[dist_mask]
-
+    dot = torch.sum(q0 * q1, dim=-1, keepdim=True)
     if shortestpath:
-        d_old = torch.clone(d)
-        d = torch.where(d_old < 0, -d, d)
-        q1 = torch.where(d_old < 0, -q1, q1)
+        q1 = torch.where(dot < 0.0, -q1, q1)
+        dot = torch.abs(dot)
+    dot = torch.clamp(dot, -1.0, 1.0)
 
-    angle = torch.acos(d) + spin * torch.pi
-    angle_mask = (torch.abs(angle) < _EPS).squeeze()
-    out[angle_mask] = q0[angle_mask]
+    lerp = normalize_quat_wxyz((1.0 - fraction) * q0 + fraction * q1)
+    angle = torch.acos(dot) + spin * torch.pi
+    sin_angle = torch.sin(angle)
+    slerp = (
+        torch.sin((1.0 - fraction) * angle) / sin_angle.clamp_min(1.0e-8) * q0
+        + torch.sin(fraction * angle) / sin_angle.clamp_min(1.0e-8) * q1
+    )
+    use_lerp = torch.abs(sin_angle) < 1.0e-6
+    return normalize_quat_wxyz(torch.where(use_lerp, lerp, slerp))
 
-    final_mask = torch.logical_or(zero_mask, ones_mask)
-    final_mask = torch.logical_or(final_mask, dist_mask)
-    final_mask = torch.logical_or(final_mask, angle_mask)
-    final_mask = torch.logical_not(final_mask)
 
-    isin = 1.0 / angle
-    q0 *= torch.sin((1.0 - fraction) * angle) * isin
-    q1 *= torch.sin(fraction * angle) * isin
-    q0 += q1
-    out[final_mask] = q0[final_mask]
-    return out
+def quat_conjugate_wxyz(q: torch.Tensor) -> torch.Tensor:
+    return torch.cat((q[..., :1], -q[..., 1:]), dim=-1)
+
+
+def quat_mul_wxyz(q: torch.Tensor, r: torch.Tensor) -> torch.Tensor:
+    w1, x1, y1, z1 = q.unbind(dim=-1)
+    w2, x2, y2, z2 = r.unbind(dim=-1)
+    return torch.stack(
+        (
+            w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2,
+            w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2,
+            w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2,
+            w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2,
+        ),
+        dim=-1,
+    )
+
+
+def quat_apply_inverse_wxyz(q: torch.Tensor, v: torch.Tensor) -> torch.Tensor:
+    q_vec = -q[..., 1:]
+    q_w = q[..., :1]
+    t = 2.0 * torch.cross(q_vec, v, dim=-1)
+    return v + q_w * t + torch.cross(q_vec, t, dim=-1)
+
+
+def angular_velocity_b_from_quat_delta(
+    previous_quat_wxyz: torch.Tensor,
+    current_quat_wxyz: torch.Tensor,
+    dt: float,
+) -> torch.Tensor:
+    q_delta = quat_mul_wxyz(
+        quat_conjugate_wxyz(previous_quat_wxyz),
+        current_quat_wxyz,
+    )
+    q_delta = torch.where(q_delta[..., :1] < 0.0, -q_delta, q_delta)
+    return 2.0 * q_delta[..., 1:] / dt
 
 
 class G1_AMPLoader:
@@ -57,6 +87,7 @@ class G1_AMPLoader:
             preload_transitions=False,
             num_preload_transitions=1000000,
             num_frames=5,
+            amp_observation_mode="joint_pos",
         ):
         """Expert dataset provides AMP observations from Dog mocap dataset.
 
@@ -65,6 +96,10 @@ class G1_AMPLoader:
         self.device = device
         self.time_between_frames = time_between_frames
         self.num_frames = num_frames
+        self.amp_observation_mode = amp_observation_mode
+        self._amp_observation_dim = self._resolve_amp_observation_dim(
+            amp_observation_mode
+        )
         
         # Values to store for each trajectory.
         self.trajectories = []
@@ -137,8 +172,14 @@ class G1_AMPLoader:
             for i in range(self.num_frames):
                 frame_time = times + (i - (self.num_frames - 2)) * self.time_between_frames
                 full_frame = self.get_full_frame_at_time_batch(traj_idxs, frame_time)
-                # 预处理：提前提取并连接需要的列（7:26 和 29:33），避免每次生成时重复切片
-                processed_frame = full_frame[:, 7:36]
+                previous_full_frame = self.get_full_frame_at_time_batch(
+                    traj_idxs,
+                    frame_time - self.time_between_frames,
+                )
+                processed_frame = self.build_amp_observation(
+                    full_frame,
+                    previous_full_frame,
+                )
 
                 self.preloaded_frames.append(processed_frame)
             print(f'Finished preloading multiple frames')
@@ -158,15 +199,22 @@ class G1_AMPLoader:
 
     def traj_time_sample(self, traj_idx):
         """Sample random time for traj."""
-        subst = self.time_between_frames + self.trajectory_frame_durations[traj_idx]
-        return max(
-            0, (self.trajectory_lens[traj_idx] * np.random.uniform() - subst))
+        history_s = max(0, self.num_frames - 1) * self.time_between_frames
+        latest_s = max(0.0, self.trajectory_lens[traj_idx] - self.time_between_frames)
+        earliest_s = min(history_s, latest_s)
+        return earliest_s + (latest_s - earliest_s) * np.random.uniform()
 
     def traj_time_sample_batch(self, traj_idxs):
         """Sample random time for multiple trajectories."""
-        subst = self.time_between_frames + self.trajectory_frame_durations[traj_idxs]
-        time_samples = self.trajectory_lens[traj_idxs] * np.random.uniform(size=len(traj_idxs)) - subst
-        return np.maximum(np.zeros_like(time_samples), time_samples)
+        history_s = max(0, self.num_frames - 1) * self.time_between_frames
+        latest_s = np.maximum(
+            0.0,
+            self.trajectory_lens[traj_idxs] - self.time_between_frames,
+        )
+        earliest_s = np.minimum(history_s, latest_s)
+        return earliest_s + (latest_s - earliest_s) * np.random.uniform(
+            size=len(traj_idxs)
+        )
 
     def slerp(self, val0, val1, blend):
         return (1.0 - blend) * val0 + blend * val1
@@ -177,44 +225,37 @@ class G1_AMPLoader:
 
     def get_frame_at_time(self, traj_idx, time):
         """Returns frame for the given trajectory at the specified time."""
-        p = float(time) / self.trajectory_lens[traj_idx]
-        n = self.trajectories[traj_idx].shape[0]
-        idx_low, idx_high = int(np.floor(p * n)), int(np.ceil(p * n))
-        frame_start = self.trajectories[traj_idx][idx_low]
-        frame_end = self.trajectories[traj_idx][idx_high]
-        blend = p * n - idx_low
-        return self.slerp(frame_start, frame_end, blend)
+        traj_idxs = np.array([traj_idx])
+        times = np.array([time])
+        return self.get_frame_at_time_batch(traj_idxs, times).squeeze(0)
 
     def get_frame_at_time_batch(self, traj_idxs, times):
         """Returns frame for the given trajectory at the specified time."""
-        p = times / self.trajectory_lens[traj_idxs]
-        n = self.trajectory_num_frames[traj_idxs]
-        idx_low, idx_high = np.floor(p * n).astype(np.int32), np.ceil(p * n).astype(np.int32)
-        all_frame_starts = torch.zeros(len(traj_idxs), self.observation_dim, device=self.device)
-        all_frame_ends = torch.zeros(len(traj_idxs), self.observation_dim, device=self.device)
-        for traj_idx in set(traj_idxs):
-            trajectory = self.trajectories[traj_idx]
-            traj_mask = traj_idxs == traj_idx
-            all_frame_starts[traj_mask] = trajectory[idx_low[traj_mask]]
-            all_frame_ends[traj_mask] = trajectory[idx_high[traj_mask]]
-        blend = torch.tensor(p * n - idx_low, device=self.device, dtype=torch.float32).unsqueeze(-1)
-        return self.slerp(all_frame_starts, all_frame_ends, blend)
+        times = np.asarray(times)
+        full_frame = self.get_full_frame_at_time_batch(traj_idxs, times)
+        previous_full_frame = self.get_full_frame_at_time_batch(
+            traj_idxs,
+            times - self.time_between_frames,
+        )
+        return self.build_amp_observation(full_frame, previous_full_frame)
 
     def get_full_frame_at_time(self, traj_idx, time):
         """Returns full frame for the given trajectory at the specified time."""
-        p = float(time) / self.trajectory_lens[traj_idx]
-        n = self.trajectories_full[traj_idx].shape[0]
-        idx_low, idx_high = int(np.floor(p * n)), int(np.ceil(p * n))
-        frame_start = self.trajectories_full[traj_idx][idx_low]
-        frame_end = self.trajectories_full[traj_idx][idx_high]
-        blend = p * n - idx_low
-        print(idx_low, idx_high)
-        return self.blend_frame_pose(frame_start, frame_end, blend)
+        traj_idxs = np.array([traj_idx])
+        times = np.array([time])
+        return self.get_full_frame_at_time_batch(traj_idxs, times).squeeze(0)
 
     def get_full_frame_at_time_batch(self, traj_idxs, times):
-        p = times / self.trajectory_lens[traj_idxs]
-        n = self.trajectory_num_frames[traj_idxs]
-        idx_low, idx_high = np.floor(p * n).astype(np.int32), np.ceil(p * n).astype(np.int32)
+        times = np.asarray(times)
+        traj_lens = self.trajectory_lens[traj_idxs]
+        frame_durations = self.trajectory_frame_durations[traj_idxs]
+        max_times = np.maximum(traj_lens - 1.0e-6, 0.0)
+        times = np.clip(times, 0.0, max_times)
+        frame_pos = times / frame_durations
+        n = self.trajectory_num_frames[traj_idxs].astype(np.int32)
+        idx_low = np.floor(frame_pos).astype(np.int32)
+        idx_low = np.clip(idx_low, 0, n - 1)
+        idx_high = np.minimum(idx_low + 1, n - 1)
         all_frame_pos_starts = torch.zeros(len(traj_idxs), 3, device=self.device)
         all_frame_pos_ends = torch.zeros(len(traj_idxs), 3, device=self.device)
         all_frame_rot_starts = torch.zeros(len(traj_idxs), 4, device=self.device)
@@ -230,11 +271,48 @@ class G1_AMPLoader:
             all_frame_rot_ends[traj_mask] = G1_AMPLoader.get_root_rot_batch(trajectory[idx_high[traj_mask]])
             all_frame_amp_starts[traj_mask] = trajectory[idx_low[traj_mask]][:, 7:36] # base vel3+ang3, dof vel23+ang23
             all_frame_amp_ends[traj_mask] = trajectory[idx_high[traj_mask]][:, 7:36]  # base vel3+ang3, dof vel23+ang23
-        blend = torch.tensor(p * n - idx_low, device=self.device, dtype=torch.float32).unsqueeze(-1)
+        blend = torch.tensor(frame_pos - idx_low, device=self.device, dtype=torch.float32).unsqueeze(-1)
         pos_blend = self.slerp(all_frame_pos_starts, all_frame_pos_ends, blend)
         rot_blend = quaternion_slerp(all_frame_rot_starts, all_frame_rot_ends, blend)
         amp_blend = self.slerp(all_frame_amp_starts, all_frame_amp_ends, blend)
         return torch.cat([pos_blend, rot_blend, amp_blend], dim=-1)
+
+    def build_amp_observation(
+        self,
+        full_frame: torch.Tensor,
+        previous_full_frame: torch.Tensor,
+    ) -> torch.Tensor:
+        joint_pos = full_frame[:, 7:36]
+        if self.amp_observation_mode == "joint_pos":
+            return joint_pos
+
+        joint_vel = (joint_pos - previous_full_frame[:, 7:36]) / self.time_between_frames
+
+        root_quat = full_frame[:, 3:7]
+        previous_root_quat = previous_full_frame[:, 3:7]
+        root_lin_vel_w = (
+            full_frame[:, :3] - previous_full_frame[:, :3]
+        ) / self.time_between_frames
+        root_lin_vel_b = quat_apply_inverse_wxyz(root_quat, root_lin_vel_w)
+        root_ang_vel_b = angular_velocity_b_from_quat_delta(
+            previous_root_quat,
+            root_quat,
+            self.time_between_frames,
+        )
+        gravity_w = torch.zeros(full_frame.shape[0], 3, device=self.device)
+        gravity_w[:, 2] = -1.0
+        projected_gravity_b = quat_apply_inverse_wxyz(root_quat, gravity_w)
+
+        return torch.cat(
+            (
+                joint_pos,
+                joint_vel,
+                root_lin_vel_b,
+                root_ang_vel_b,
+                projected_gravity_b,
+            ),
+            dim=-1,
+        )
 
     def get_frame(self):
         """Returns random frame."""
@@ -298,13 +376,24 @@ class G1_AMPLoader:
                     s = self.preloaded_frames[i][idxs]
                     frames.append(s)
             else:
-                NotImplementedError('preload transition')
-            yield torch.stack(frames, dim=1)    # [batch, num_frames, 16]
+                raise NotImplementedError("AMP mini-batches require preloaded transitions.")
+            yield torch.stack(frames, dim=1)
 
     @property
     def observation_dim(self):
         """Size of AMP observations."""
-        return self.trajectories[0].shape[1] + 1
+        return self._amp_observation_dim
+
+    @staticmethod
+    def _resolve_amp_observation_dim(amp_observation_mode: str) -> int:
+        if amp_observation_mode == "joint_pos":
+            return 29
+        if amp_observation_mode == "rich":
+            return 67
+        raise ValueError(
+            "Unsupported AMP observation mode: "
+            f"{amp_observation_mode!r}. Expected 'joint_pos' or 'rich'."
+        )
 
     @property
     def num_motions(self):

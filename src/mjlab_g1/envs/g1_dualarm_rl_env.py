@@ -16,6 +16,7 @@ from mjlab.sim.sim import Simulation
 from mjlab.tasks.manipulation.mdp.commands import LiftingCommand
 from mjlab.utils.logging import print_info
 from mjlab.viewer.offscreen_renderer import OffscreenRenderer
+from mjlab_g1.envs.amp_observations import g1_rich_amp_observations
 from mjlab_g1.tasks.dualarm.virtual_object_pd import (
     VirtualObjectPdCfg,
     VirtualObjectPdController,
@@ -502,4 +503,4 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         return toaster_z >= required_z
 
     def get_amp_observations(self):
-        return self.robot.data.joint_pos
+        return g1_rich_amp_observations(self.robot, self.num_envs, self.device)

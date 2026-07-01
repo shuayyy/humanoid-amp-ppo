@@ -5,6 +5,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import time
 
@@ -28,6 +29,10 @@ class AMPOnPolicyRunner(OnPolicyRunner):
         self.save_interval = self.cfg["save_interval"]
         self.logger_type = self.cfg.get("logger", "tensorboard").lower()
         self.disable_logs = self.logger.disable_logs
+        self._last_amp_reward_coef = float(self.cfg.get("amp_reward_coef", 1.0))
+        self._last_amp_task_reward_lerp = float(
+            self.cfg.get("amp_task_reward_lerp", 0.0)
+        )
 
     def learn(self, num_learning_iterations: int, init_at_random_ep_len: bool = False) -> None:  # noqa: C901
         if init_at_random_ep_len:
@@ -38,6 +43,7 @@ class AMPOnPolicyRunner(OnPolicyRunner):
 
         obs = self.env.get_observations().to(self.device)
         amp_obs = self.env.get_amp_observations().to(self.device)
+        self._validate_amp_observations(amp_obs)
         self.alg.train_mode()
 
         if self.is_distributed:
@@ -60,6 +66,7 @@ class AMPOnPolicyRunner(OnPolicyRunner):
         start_it = self.current_learning_iteration
         total_it = start_it + num_learning_iterations
         for it in range(start_it, total_it):
+            amp_reward_mix = self._compute_amp_reward_mix(it)
             start = time.time()
             with torch.inference_mode():
                 for _ in range(self.cfg["num_steps_per_env"]):
@@ -76,6 +83,7 @@ class AMPOnPolicyRunner(OnPolicyRunner):
                     )
 
                     next_amp_obs = self.env.get_amp_observations().to(self.device)
+                    self._validate_amp_observations(next_amp_obs)
                     next_amp_obs_with_term = next_amp_obs.clone()
                     reset_env_ids = self.env.reset_env_ids
                     if reset_env_ids is not None and len(reset_env_ids) > 0:
@@ -90,6 +98,7 @@ class AMPOnPolicyRunner(OnPolicyRunner):
                         amp_obs_frames,
                         rewards,
                         normalizer=self.alg.amp_normalizer,
+                        **amp_reward_mix,
                     )
 
                     self.alg.process_env_step(
@@ -115,6 +124,8 @@ class AMPOnPolicyRunner(OnPolicyRunner):
                 self.alg.compute_returns(obs)
 
             loss_dict = self.alg.update()
+            loss_dict["amp_reward_coef"] = self._last_amp_reward_coef
+            loss_dict["amp_task_reward_lerp"] = self._last_amp_task_reward_lerp
 
             stop = time.time()
             learn_time = stop - start
@@ -138,3 +149,64 @@ class AMPOnPolicyRunner(OnPolicyRunner):
         if self.logger.writer is not None:
             self.save(os.path.join(self.logger.log_dir, f"model_{self.current_learning_iteration}.pt"))  # type: ignore
             self.logger.stop_logging_writer()
+
+    def _compute_amp_reward_mix(self, iteration: int) -> dict[str, float]:
+        schedule = self.cfg.get("amp_reward_schedule", "constant")
+        final_coef = self.cfg.get("amp_reward_final_coef")
+        if final_coef is None:
+            final_coef = self.cfg.get("amp_reward_coef", 1.0)
+        initial_coef = self.cfg.get("amp_reward_initial_coef")
+        if initial_coef is None:
+            initial_coef = final_coef
+
+        final_lerp = self.cfg.get("amp_task_reward_lerp_final")
+        if final_lerp is None:
+            final_lerp = self.cfg.get("amp_task_reward_lerp", 0.0)
+        initial_lerp = self.cfg.get("amp_task_reward_lerp_initial")
+        if initial_lerp is None:
+            initial_lerp = final_lerp
+
+        progress = self._schedule_progress(iteration, schedule)
+        amp_reward_coef = self._lerp(float(initial_coef), float(final_coef), progress)
+        task_reward_lerp = self._lerp(float(initial_lerp), float(final_lerp), progress)
+
+        self._last_amp_reward_coef = amp_reward_coef
+        self._last_amp_task_reward_lerp = task_reward_lerp
+        return {
+            "amp_reward_coef": amp_reward_coef,
+            "task_reward_lerp": task_reward_lerp,
+        }
+
+    def _schedule_progress(self, iteration: int, schedule: str) -> float:
+        if schedule == "constant":
+            return 1.0
+
+        schedule_iterations = int(
+            self.cfg.get("amp_reward_schedule_iterations", 0)
+            or self.cfg.get("max_iterations", 1)
+        )
+        progress = min(max(iteration / max(schedule_iterations, 1), 0.0), 1.0)
+
+        if schedule == "linear":
+            return progress
+        if schedule == "cosine":
+            return 0.5 - 0.5 * math.cos(math.pi * progress)
+        raise ValueError(
+            "Unsupported AMP reward schedule: "
+            f"{schedule!r}. Expected 'constant', 'linear', or 'cosine'."
+        )
+
+    @staticmethod
+    def _lerp(start: float, end: float, progress: float) -> float:
+        return start + (end - start) * progress
+
+    def _validate_amp_observations(self, amp_obs: torch.Tensor) -> None:
+        expected_shape = (
+            self.env.num_envs,
+            self.alg.amp_observation_dim,
+        )
+        if tuple(amp_obs.shape) != expected_shape:
+            raise RuntimeError(
+                "AMP observation shape mismatch: "
+                f"expected {expected_shape}, got {tuple(amp_obs.shape)}."
+            )

@@ -444,8 +444,16 @@ class AMP_PPO(PPO):
             num_preload_transitions=cfg["amp_num_preload_transitions"],
             motion_files=cfg["amp_motion_files"],
             num_frames=cfg["amp_num_frames"],
+            amp_observation_mode=cfg.get("amp_observation_mode", "joint_pos"),
         )
         amp_observation_dim = amp_data.observation_dim if cfg["amp_num_obs"] == 0 else cfg["amp_num_obs"]
+        if amp_observation_dim != amp_data.observation_dim:
+            raise ValueError(
+                "AMP observation dimension mismatch: "
+                f"config requested {amp_observation_dim}, "
+                f"but motion loader produces {amp_data.observation_dim} "
+                f"for mode {cfg.get('amp_observation_mode', 'joint_pos')!r}."
+            )
         amp_num_frames = 1 if cfg["amp_num_frames"] == 0 else cfg["amp_num_frames"]
         amp_normalizer = Normalizer(amp_observation_dim)
         discriminator = DiscriminatorMulti(
@@ -456,6 +464,7 @@ class AMP_PPO(PPO):
             amp_num_frames,
             cfg["amp_task_reward_lerp"],
             cfg["use_lerp"],
+            cfg.get("amp_reward_additive_scale", 0.02),
         ).to(device)
 
         storage = RolloutStorage("rl", env.num_envs, cfg["num_steps_per_env"], obs, [env.num_actions], device)

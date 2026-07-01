@@ -7,7 +7,8 @@ import torch.nn.utils.spectral_norm as spectral_norm
 class DiscriminatorMulti(nn.Module):
     def __init__(
             self, state_dim, amp_reward_coef, hidden_layer_sizes, device, 
-            num_frames=2, task_reward_lerp=0.0, use_lerp=True):
+            num_frames=2, task_reward_lerp=0.0, use_lerp=True,
+            additive_reward_scale=0.02):
         super(DiscriminatorMulti, self).__init__()
 
         self.device = device
@@ -16,6 +17,7 @@ class DiscriminatorMulti(nn.Module):
         self.num_frames = num_frames  # 存储帧数参数
 
         self.amp_reward_coef = amp_reward_coef
+        self.additive_reward_scale = additive_reward_scale
         amp_layers = []
 
         curr_in_dim = state_dim * num_frames
@@ -69,7 +71,9 @@ class DiscriminatorMulti(nn.Module):
 
     def predict_amp_reward(
             self, states,  # 改为接收多帧状态列表
-            task_reward, normalizer=None):
+            task_reward, normalizer=None,
+            amp_reward_coef=None,
+            task_reward_lerp=None):
         """
             states: torch.Tensor, shape=(num_envs, num_frames, state_dim)
             task_reward: torch.Tensor, shape=(num_envs, 1)
@@ -83,19 +87,20 @@ class DiscriminatorMulti(nn.Module):
             # 拼接多帧状态
             state_cat = states.flatten(1)
             d = self.amp_linear(self.trunk(state_cat))
-            disc_reward = self.amp_reward_coef * torch.clamp(1 - (1/4) * torch.square(d - 1), min=0)
+            reward_coef = self.amp_reward_coef if amp_reward_coef is None else amp_reward_coef
+            lerp = self.task_reward_lerp if task_reward_lerp is None else task_reward_lerp
+            disc_reward = reward_coef * torch.clamp(1 - (1/4) * torch.square(d - 1), min=0)
             
             if self.use_lerp:
-                if self.task_reward_lerp > 0:
-                    reward = self._lerp_reward(disc_reward, task_reward.unsqueeze(-1))
+                reward = self._lerp_reward(disc_reward, task_reward.unsqueeze(-1), lerp)
                 self.train()
-                return reward.squeeze(-1), d, disc_reward.squeeze(-1) * (1.0 - self.task_reward_lerp)
+                return reward.squeeze(-1), d, disc_reward.squeeze(-1) * (1.0 - lerp)
             else:
-                disc_reward *= 0.02
+                disc_reward *= self.additive_reward_scale
                 reward = task_reward.unsqueeze(-1) + disc_reward
                 self.train()
                 return reward.squeeze(-1), d, disc_reward.squeeze(-1)
 
-    def _lerp_reward(self, disc_r, task_r):
-        r = (1.0 - self.task_reward_lerp) * disc_r + self.task_reward_lerp * task_r
+    def _lerp_reward(self, disc_r, task_r, task_reward_lerp):
+        r = (1.0 - task_reward_lerp) * disc_r + task_reward_lerp * task_r
         return r

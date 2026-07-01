@@ -139,11 +139,19 @@ class RslRlOnPolicyRunnerCfg(RslRlBaseRunnerCfg):
 
 @dataclass
 class RslRlAMPOnPolicyRunnerCfg(RslRlOnPolicyRunnerCfg):
-  amp_num_obs: int = 29
+  amp_num_obs: int = 67
+  amp_observation_mode: Literal["joint_pos", "rich"] = "rich"
   amp_num_frames: int = 10
   use_lerp: bool = False
   amp_task_reward_lerp: float = 0.7
   amp_reward_coef: float = 20.0
+  amp_reward_schedule: Literal["constant", "linear", "cosine"] = "constant"
+  amp_reward_schedule_iterations: int = 0
+  amp_reward_initial_coef: float | None = None
+  amp_reward_final_coef: float | None = None
+  amp_task_reward_lerp_initial: float | None = None
+  amp_task_reward_lerp_final: float | None = None
+  amp_reward_additive_scale: float = 0.02
   amp_motion_files: str = "dataset/locomotion"
   amp_num_preload_transitions: int = 200000
   amp_discr_hidden_dims: Tuple[int, ...] = (256, 256)

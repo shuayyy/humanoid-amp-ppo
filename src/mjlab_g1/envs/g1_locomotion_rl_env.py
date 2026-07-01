@@ -16,6 +16,7 @@ from mjlab.sim.sim import Simulation
 from mjlab.utils.logging import print_info
 from mjlab.viewer.offscreen_renderer import OffscreenRenderer
 from mjlab.viewer.debug_visualizer import DebugVisualizer
+from mjlab_g1.envs.amp_observations import g1_rich_amp_observations
 _DESIRED_FRAME_COLORS = ((1.0, 0.5, 0.5), (0.5, 1.0, 0.5), (0.5, 0.5, 1.0))
 
 # dataclass auto-generates init/printing for config classes.
@@ -246,4 +247,4 @@ class G1LocomotionManagerBasedRlEnv(ManagerBasedRlEnv):
         self.extras["log"].update(info)
 
     def get_amp_observations(self):
-        return self.robot.data.joint_pos
+        return g1_rich_amp_observations(self.robot, self.num_envs, self.device)
