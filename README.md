@@ -77,7 +77,7 @@ Mjlab-G1-DualArm \
 
 ## Play
 
-Bundled checkpoints:
+Trained Policies:
 
 - `models/locomotion.pt`
 - `models/dual_arm.pt`
@@ -104,10 +104,3 @@ Current task-specific AMP dataset paths:
 
 - locomotion: `dataset/locomotion`
 - dualarm: `dataset/dualarm`
-
-## Notes
-
-- The toaster init pose is defined in:
-  - `src/mjlab_g1/assets/toaster_constants.py`
-- Dual-arm uses a `place_pos` command target and AMP.
-- Locomotion and dual-arm are intentionally separate task trees.
