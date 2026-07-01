@@ -451,25 +451,17 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
 
     def _apply_virtual_pd_assistance(self) -> None:
         """
-        Physics-substep virtual-PD hook gated by bilateral grasp-marker contact.
+        Physics-substep virtual-PD hook.
         """
         assert self.virtual_pd_controller is not None
 
         reference_pos_w, reference_vel_w = self.get_object_trajectory_reference()
 
-        left_sensor = self.scene["left_hand_toaster_contact"]
-        right_sensor = self.scene["right_hand_toaster_contact"]
-
-        assert left_sensor.data.found is not None
-        assert right_sensor.data.found is not None
-
-        left_contact = torch.any(left_sensor.data.found > 0, dim=-1)
-        right_contact = torch.any(right_sensor.data.found > 0, dim=-1)
-        bilateral_contact = left_contact & right_contact
-
-        assistance_scale = (
-            self.virtual_pd_assistance_scale
-            * bilateral_contact.float()
+        assistance_scale = torch.full(
+            (self.num_envs,),
+            self.virtual_pd_assistance_scale,
+            device=self.device,
+            dtype=reference_pos_w.dtype,
         )
 
         self.virtual_pd_controller.apply(

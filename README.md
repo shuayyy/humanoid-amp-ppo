@@ -9,7 +9,17 @@ An AMP discriminator is trained on human motion data to help the humanoid RL pol
 
 ## Locomotion policy:
 
-<video src="assets/locomotion.mp4" controls width="720"></video>
+![Locomotion policy](assets/locomotion.gif)
+
+[MP4 version](assets/locomotion.mp4)
+
+## Dual-arm policy:
+
+![Dual-arm policy](assets/dual_arm.gif)
+
+[MP4 version](assets/dual_arm.mp4)
+
+TODO: Dual arm policy will be finetuned.
 
 ## Codebase Structure
 
