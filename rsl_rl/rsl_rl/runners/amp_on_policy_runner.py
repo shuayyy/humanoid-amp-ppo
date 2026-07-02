@@ -166,8 +166,19 @@ class AMPOnPolicyRunner(OnPolicyRunner):
         if initial_lerp is None:
             initial_lerp = final_lerp
 
-        progress = self._schedule_progress(iteration, schedule)
-        amp_reward_coef = self._lerp(float(initial_coef), float(final_coef), progress)
+        if schedule == "piecewise_linear":
+            amp_reward_coef = self._piecewise_linear_value(
+                iteration,
+                self.cfg.get("amp_reward_schedule_points", ()),
+            )
+            progress = 1.0
+        else:
+            progress = self._schedule_progress(iteration, schedule)
+            amp_reward_coef = self._lerp(
+                float(initial_coef),
+                float(final_coef),
+                progress,
+            )
         task_reward_lerp = self._lerp(float(initial_lerp), float(final_lerp), progress)
 
         self._last_amp_reward_coef = amp_reward_coef
@@ -193,12 +204,48 @@ class AMPOnPolicyRunner(OnPolicyRunner):
             return 0.5 - 0.5 * math.cos(math.pi * progress)
         raise ValueError(
             "Unsupported AMP reward schedule: "
-            f"{schedule!r}. Expected 'constant', 'linear', or 'cosine'."
+            f"{schedule!r}. Expected 'constant', 'linear', 'cosine', or "
+            "'piecewise_linear'."
         )
 
     @staticmethod
     def _lerp(start: float, end: float, progress: float) -> float:
         return start + (end - start) * progress
+
+    def _piecewise_linear_value(
+        self,
+        iteration: int,
+        points: tuple[tuple[int, float], ...] | list[tuple[int, float]],
+    ) -> float:
+        if len(points) == 0:
+            raise ValueError(
+                "amp_reward_schedule_points must not be empty when "
+                "amp_reward_schedule='piecewise_linear'."
+            )
+
+        schedule_points = [(int(step), float(value)) for step, value in points]
+        previous_step = -1
+        for step, _ in schedule_points:
+            if step <= previous_step:
+                raise ValueError(
+                    "amp_reward_schedule_points steps must be strictly ascending."
+                )
+            previous_step = step
+
+        first_step, first_value = schedule_points[0]
+        if iteration <= first_step:
+            return first_value
+
+        for (start_step, start_value), (end_step, end_value) in zip(
+            schedule_points,
+            schedule_points[1:],
+            strict=False,
+        ):
+            if iteration <= end_step:
+                progress = (iteration - start_step) / max(end_step - start_step, 1)
+                return self._lerp(start_value, end_value, progress)
+
+        return schedule_points[-1][1]
 
     def _validate_amp_observations(self, amp_obs: torch.Tensor) -> None:
         expected_shape = (

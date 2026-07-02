@@ -316,10 +316,10 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
     terminations = {
         "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
         # Disabled for now to avoid immediately training a fall-termination policy.
-        "fell_over": TerminationTermCfg(
-            func=mdp.bad_orientation,
-            params={"limit_angle": math.radians(70.0)},
-        ),
+        # "fell_over": TerminationTermCfg(
+        #     func=mdp.bad_orientation,
+        #     params={"limit_angle": math.radians(70.0)},
+        # ),
         # "illegal_contact": TerminationTermCfg(
         #     func=mdp.illegal_contact,
         #     params={

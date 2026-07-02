@@ -116,7 +116,11 @@ def unitree_g1_dualarm_env_cfg(play: bool = False) -> G1DualarmManagerBasedRlEnv
     name="illegal_toaster_contact",
     primary=ContactMatch(
       mode="geom",
-      pattern=r"^(torso|left|right)_(hip|thigh|shin|linkage_brace|foot[1-7])_collision$|^torso_collision$",
+      # Only legs and feet are illegal toaster contacts here. Torso/body
+      # contact is intentionally not included while training the lift.
+      # Previous broader pattern included torso/body contact:
+      # pattern=r"^(torso|left|right)_(hip|thigh|shin|linkage_brace|foot[1-7])_collision$|^torso_collision$",
+      pattern=r"^(left|right)_(hip_collision|thigh|thigh_collision|shin|shin_collision|foot[1-7]_collision)$",
       entity="robot",
     ),
     secondary=ContactMatch(

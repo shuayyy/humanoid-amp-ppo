@@ -30,15 +30,43 @@ def _select_stage(schedule, common_step_counter: int):
     return selected_stage
 
 
+def _interpolate_scalar_stage(schedule, common_step_counter: int) -> float:
+    return _interpolate_stage_values(schedule, common_step_counter)[0]
+
+
+def _interpolate_stage_values(schedule, common_step_counter: int) -> tuple[float, ...]:
+    if common_step_counter <= schedule[0][0]:
+        return tuple(float(value) for value in schedule[0][1:])
+
+    for start_stage, end_stage in zip(schedule, schedule[1:], strict=False):
+        start_step = start_stage[0]
+        end_step = end_stage[0]
+        if common_step_counter <= end_step:
+            progress = (common_step_counter - start_step) / max(
+                end_step - start_step,
+                1,
+            )
+            return tuple(
+                float(start_value) + (float(end_value) - float(start_value)) * progress
+                for start_value, end_value in zip(
+                    start_stage[1:],
+                    end_stage[1:],
+                    strict=True,
+                )
+            )
+
+    return tuple(float(value) for value in schedule[-1][1:])
+
+
 def virtual_pd_assistance_curriculum(
     env,
     env_ids: torch.Tensor,
 ) -> torch.Tensor:
     """
-    Global common-step schedule for virtual-PD assistance.
+    Global common-step linear schedule for virtual-PD assistance.
 
-    The same scale is shared by all environments. Per-environment activation is
-    handled separately by bilateral grasp-marker contact gating in the env.
+    The same scale is shared by all environments. Contact gating belongs to the
+    reward, not the virtual-PD assistance.
     """
     del env_ids
 
@@ -54,7 +82,7 @@ def virtual_pd_assistance_curriculum(
                 "virtual_pd_curriculum_schedule scales must be in [0.0, 1.0]."
             )
 
-    _, selected_scale = _select_stage(schedule, env.common_step_counter)
+    selected_scale = _interpolate_scalar_stage(schedule, env.common_step_counter)
 
     env.virtual_pd_assistance_scale = float(selected_scale)
     return torch.tensor(
@@ -69,7 +97,7 @@ def feet_slip_curriculum(
     env_ids: torch.Tensor,
 ) -> dict[str, torch.Tensor]:
     """
-    Step schedule for foot-slip penalty strength and deadzone.
+    Linear schedule for foot-slip penalty strength and deadzone.
     """
     del env_ids
 
@@ -84,7 +112,7 @@ def feet_slip_curriculum(
                 "feet_slip_curriculum_schedule thresholds must be non-negative."
             )
 
-    _, selected_weight, selected_threshold_min = _select_stage(
+    selected_weight, selected_threshold_min = _interpolate_stage_values(
         schedule,
         env.common_step_counter,
     )
@@ -112,7 +140,7 @@ def missing_grasp_curriculum(
     env_ids: torch.Tensor,
 ) -> torch.Tensor:
     """
-    Step schedule for the missing-grasp penalty during trajectory lift.
+    Linear schedule for the missing-grasp penalty during trajectory lift.
     """
     del env_ids
 
@@ -128,7 +156,7 @@ def missing_grasp_curriculum(
                 "missing_grasp_curriculum_schedule weights must be <= 0.0."
             )
 
-    _, selected_weight = _select_stage(schedule, env.common_step_counter)
+    selected_weight = _interpolate_scalar_stage(schedule, env.common_step_counter)
 
     term_cfg = env.dualarm_reward_manager.get_term_cfg("missing_grasp_during_lift")
     term_cfg.weight = float(selected_weight)

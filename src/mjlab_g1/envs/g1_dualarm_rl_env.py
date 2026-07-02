@@ -50,20 +50,18 @@ class G1DualarmManagerBasedRlEnvCfg(ManagerBasedRlEnvCfg):
     virtual_pd_cfg: VirtualObjectPdCfg = field(default_factory=VirtualObjectPdCfg)
     virtual_pd_curriculum_schedule: tuple[tuple[int, float], ...] = (
         (0, 1.0),
-        (350_000, 0.75),
-        (550_000, 0.50),
-        (750_000, 0.25),
-        (950_000, 0.0),
+        (24_000, 1.0),
+        (96_000, 0.0),
     )
     feet_slip_curriculum_schedule: tuple[tuple[int, float, float], ...] = (
         (0, -0.5, 0.05),
-        (300_000, -1.0, 0.04),
-        (600_000, -2.0, 0.03),
+        (12_000, -0.5, 0.05),
+        (36_000, -2.0, 0.03),
     )
     missing_grasp_curriculum_schedule: tuple[tuple[int, float], ...] = (
         (0, 0.0),
-        (250_000, -0.25),
-        (500_000, -0.5),
+        (12_000, 0.0),
+        (24_000, -0.5),
     )
 
 

@@ -145,8 +145,11 @@ class RslRlAMPOnPolicyRunnerCfg(RslRlOnPolicyRunnerCfg):
   use_lerp: bool = False
   amp_task_reward_lerp: float = 0.7
   amp_reward_coef: float = 20.0
-  amp_reward_schedule: Literal["constant", "linear", "cosine"] = "constant"
+  amp_reward_schedule: Literal[
+    "constant", "linear", "cosine", "piecewise_linear"
+  ] = "constant"
   amp_reward_schedule_iterations: int = 0
+  amp_reward_schedule_points: Tuple[Tuple[int, float], ...] = ()
   amp_reward_initial_coef: float | None = None
   amp_reward_final_coef: float | None = None
   amp_task_reward_lerp_initial: float | None = None
