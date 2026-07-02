@@ -15,6 +15,7 @@ uv.lock
 video
 wandb
 logs
+training_logs/
 agents
 AMP_feature.md
 src.zip

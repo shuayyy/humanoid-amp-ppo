@@ -339,21 +339,20 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
     }
     terminations = {
         "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
-        # Ends the episode when the torso tilts past 70deg, so episode length is a
-        # real survival signal and falling costs future upright/alive reward.
-        "fell_over": TerminationTermCfg(
-            func=mdp.bad_orientation,
-            params={"limit_angle": math.radians(70.0)},
-        ),
-        # "illegal_contact": TerminationTermCfg(
-        #     func=mdp.illegal_contact,
-        #     params={
-        #         "sensor_names": (
-        #             "illegal_ground_contact",
-        #             "illegal_toaster_contact",
-        #         ),
-        #     },
+        # Disabled for now to avoid immediately training a fall-termination policy.
+        # "fell_over": TerminationTermCfg(
+        #     func=mdp.bad_orientation,
+        #     params={"limit_angle": math.radians(70.0)},
         # ),
+        "illegal_contact": TerminationTermCfg(
+            func=mdp.illegal_contact,
+            params={
+                "sensor_names": (
+                    "illegal_ground_contact",
+                    "illegal_toaster_contact",
+                ),
+            },
+        ),
         # "success": TerminationTermCfg(
         #     func=mdp.grasp_success_held,
         #     params={
