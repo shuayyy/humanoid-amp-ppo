@@ -42,6 +42,23 @@ def hands_near_markers(
   return prox[:, 0] * prox[:, 1]
 
 
+def grasp_approach(
+  env: G1DualarmManagerBasedRlEnv, d_scale: float = 0.06
+) -> torch.Tensor:
+  """Very sharp bilateral proximity that pulls both palms the final centimeters
+  ONTO the markers.
+
+  ``hands_near_markers`` (d_scale=0.15) saturates once the hands are roughly
+  near, leaving little gradient for the last few cm into contact. This term uses
+  a much smaller length scale so it only lights up right at the marker surface,
+  supplying the missing pull across the near->contact gap. Ungated.
+  """
+  dis = env._get_hand_toaster_dis()
+  dist = torch.norm(dis, dim=-1)  # [num_envs, 2]
+  prox = torch.exp(-dist / d_scale)  # [num_envs, 2]
+  return prox[:, 0] * prox[:, 1]
+
+
 def upright(env: G1DualarmManagerBasedRlEnv) -> torch.Tensor:
   """Reward for keeping the torso vertical (projected gravity z ~= -1 upright)."""
   proj_grav_z = env.robot.data.projected_gravity_b[:, 2]

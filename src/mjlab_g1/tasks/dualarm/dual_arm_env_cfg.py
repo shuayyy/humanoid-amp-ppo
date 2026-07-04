@@ -273,6 +273,13 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
             weight=5.0,
             params={"d_scale": 0.15},
         ),
+        # Even sharper: supplies gradient across the last few cm into contact,
+        # where hands_near_markers has already saturated.
+        "grasp_approach": RewardTermCfg(
+            func=mdp.grasp_approach,
+            weight=5.0,
+            params={"d_scale": 0.06},
+        ),
         "object_trajectory_tracking": RewardTermCfg(
             func=mdp.object_trajectory_tracking,
             weight=10.0,

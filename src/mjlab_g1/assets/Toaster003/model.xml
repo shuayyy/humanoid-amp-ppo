@@ -53,8 +53,8 @@
       <!-- Hand target markers for grasp reward -->
         <site name="left_grasp_marker" type="box" pos="0.09 0.04 -0.040" size="0.005 0.06 0.05" rgba="0 1 0 1"/>
         <site name="right_grasp_marker" type="box" pos="-0.09 0.04 -0.040" size="0.005 0.06 0.05" rgba="1 0 0 1"/>
-        <geom name="left_grasp_marker_collision" type="box" pos="0.09 0.04 -0.040" size="0.005 0.06 0.05" rgba="0 1 0 0.2" class="collision_1" friction="2 0.5 0.05"/>
-        <geom name="right_grasp_marker_collision" type="box" pos="-0.09 0.04 -0.040" size="0.005 0.06 0.05" rgba="1 0 0 0.2" class="collision_1" friction="2 0.5 0.05"/>
+        <geom name="left_grasp_marker_collision" type="box" pos="0.09 0.04 -0.040" size="0.005 0.06 0.05" rgba="0 1 0 0.2" class="collision_1"/>
+        <geom name="right_grasp_marker_collision" type="box" pos="-0.09 0.04 -0.040" size="0.005 0.06 0.05" rgba="1 0 0 0.2" class="collision_1"/>
         <!-- Hand target markers for grasp reward -->
         <inertial pos="0 0 0" mass="1.10" diaginertia="0.010 0.008 0.006"/>
         <geom mesh="Body001_vis" type="mesh" solimp="0.998 0.998 0.001" solref="0.001 1" friction="0.95 0.3 0.1" class="visual" material="Body001_material"/>

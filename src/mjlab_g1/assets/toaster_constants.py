@@ -38,6 +38,10 @@ TOASTER_INIT_KEYFRAME = EntityCfg.InitialStateCfg(
 
 FULL_COLLISION_TOASTER = CollisionCfg(
   geom_names_expr=(".*",),
+  # High friction on the grasp markers so a correct two-palm pinch catches
+  # instead of slipping (the G1 has no fingers -- the grasp is friction-only).
+  # A dict only sets matched geoms; all other toaster geoms are left unchanged.
+  friction={r"^(left|right)_grasp_marker_collision$": (2.0, 0.5, 0.05)},
 )
 
 
