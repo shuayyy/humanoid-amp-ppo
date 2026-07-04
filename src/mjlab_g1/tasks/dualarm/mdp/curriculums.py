@@ -92,6 +92,38 @@ def virtual_pd_assistance_curriculum(
     )
 
 
+def object_reset_height_curriculum(
+    env,
+    env_ids: torch.Tensor,
+) -> torch.Tensor:
+    """Global schedule for the object's reset height (contact bootstrap).
+
+    Returns a fraction in [0, 1] of ``trajectory_lift_delta_z`` that the object
+    is raised at reset. 1.0 => object spawns at the (fixed) goal height so the
+    robot reaches it at a comfortable, stable height; 0.0 => object spawns on
+    the ground and must be lifted the full distance. Annealing 1 -> 0 gradually
+    reintroduces the destabilizing deep reach once the robot can stand + grasp.
+    """
+    del env_ids
+
+    schedule = env.cfg.object_reset_height_curriculum_schedule
+    _validate_schedule_start_and_order(
+        schedule,
+        "object_reset_height_curriculum_schedule",
+    )
+
+    for _, frac in schedule:
+        if not 0.0 <= frac <= 1.0:
+            raise ValueError(
+                "object_reset_height_curriculum_schedule fractions must be in [0, 1]."
+            )
+
+    selected_frac = _interpolate_scalar_stage(schedule, env.common_step_counter)
+
+    env.object_reset_height_frac = float(selected_frac)
+    return torch.tensor(selected_frac, device=env.device, dtype=torch.float32)
+
+
 def feet_slip_curriculum(
     env,
     env_ids: torch.Tensor,

@@ -53,6 +53,14 @@ class G1DualarmManagerBasedRlEnvCfg(ManagerBasedRlEnvCfg):
         (24_000, 1.0),
         (96_000, 0.0),
     )
+    # Contact-bootstrap: fraction of trajectory_lift_delta_z that the object is
+    # raised at reset (1.0 = spawns at goal height for a comfortable reach,
+    # 0.0 = spawns on the ground). Annealed 1 -> 0 as the robot learns to stand.
+    object_reset_height_curriculum_schedule: tuple[tuple[int, float], ...] = (
+        (0, 1.0),
+        (30_000, 1.0),
+        (90_000, 0.0),
+    )
     feet_slip_curriculum_schedule: tuple[tuple[int, float, float], ...] = (
         (0, -0.5, 0.05),
         (12_000, -0.5, 0.05),
@@ -152,6 +160,9 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         self._init_buffers()
         self.virtual_pd_assistance_scale = float(
             self.cfg.virtual_pd_curriculum_schedule[0][1]
+        )
+        self.object_reset_height_frac = float(
+            self.cfg.object_reset_height_curriculum_schedule[0][1]
         )
 
         self.virtual_pd_controller = VirtualObjectPdController(
@@ -363,6 +374,14 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
 
         toaster_root_state = self.toaster.data.default_root_state[env_ids].clone()
         toaster_root_state[:, :3] += env_origins
+
+        # Fixed goal height (ground spawn + full lift), independent of the
+        # bootstrap. The object is raised toward this goal at reset by the
+        # contact-bootstrap curriculum so early episodes need no deep reach.
+        goal_z = toaster_root_state[:, 2] + self.cfg.trajectory_lift_delta_z
+        bootstrap_dz = self.object_reset_height_frac * self.cfg.trajectory_lift_delta_z
+        toaster_root_state[:, 2] += bootstrap_dz
+
         self.toaster.write_root_state_to_sim(toaster_root_state, env_ids)
         assert self.virtual_pd_controller is not None
         self.virtual_pd_controller.reset(
@@ -373,7 +392,7 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         self.trajectory_start_pos_w[env_ids] = toaster_root_state[:, :3]
 
         self.trajectory_goal_pos_w[env_ids] = toaster_root_state[:, :3]
-        self.trajectory_goal_pos_w[env_ids, 2] += self.cfg.trajectory_lift_delta_z
+        self.trajectory_goal_pos_w[env_ids, 2] = goal_z
         self._sync_place_pos_command_xy(env_ids)
 
         info = self.dualarm_reward_manager.reset(env_ids)

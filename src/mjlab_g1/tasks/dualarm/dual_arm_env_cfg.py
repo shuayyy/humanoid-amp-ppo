@@ -170,7 +170,7 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
                 "asset_cfg": SceneEntityCfg("robot", geom_names=(r"^(left|right)_foot[1-7]_collision$",)),  # Set per-robot.
                 "operation": "abs",
                 "field": "geom_friction",
-                "ranges": (0.3, 1.2),
+                "ranges": (0.6, 1.0),
             },
         ),
 
@@ -196,7 +196,7 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
                 "asset_cfg": SceneEntityCfg("robot", geom_names=(".*",)),
                 "operation": "scale",
                 "field": "geom_friction",
-                "ranges": (0.3, 1.6),
+                "ranges": (0.7, 1.3),
             },
         ),
         "object_friction": EventTermCfg(
@@ -264,7 +264,14 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
         "hand_to_toaster": RewardTermCfg(
             func=mdp.hand_to_toaster,
             weight=5.0,
-            params={"d_scale": 1.0},
+            params={"d_scale": 0.75},
+        ),
+        # Sharp bilateral bonus: only pays off when BOTH palms are on their
+        # markers, guiding the robot into the pre-contact grasp configuration.
+        "hands_near_markers": RewardTermCfg(
+            func=mdp.hands_near_markers,
+            weight=5.0,
+            params={"d_scale": 0.15},
         ),
         "object_trajectory_tracking": RewardTermCfg(
             func=mdp.object_trajectory_tracking,
@@ -286,6 +293,16 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
         "feet_contact": RewardTermCfg(
             func=mdp.feet_contact,
             weight=2.5,
+        ),
+        # Stand-first: give the robot a reason to stay upright and alive, since
+        # the contact-gated task rewards are ~0 until it learns to grasp.
+        "upright": RewardTermCfg(
+            func=mdp.upright,
+            weight=1.0,
+        ),
+        "alive": RewardTermCfg(
+            func=env_mdp.is_alive,
+            weight=1.0,
         ),
     }
     
@@ -315,11 +332,12 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
     }
     terminations = {
         "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
-        # Disabled for now to avoid immediately training a fall-termination policy.
-        # "fell_over": TerminationTermCfg(
-        #     func=mdp.bad_orientation,
-        #     params={"limit_angle": math.radians(70.0)},
-        # ),
+        # Ends the episode when the torso tilts past 70deg, so episode length is a
+        # real survival signal and falling costs future upright/alive reward.
+        "fell_over": TerminationTermCfg(
+            func=mdp.bad_orientation,
+            params={"limit_angle": math.radians(70.0)},
+        ),
         # "illegal_contact": TerminationTermCfg(
         #     func=mdp.illegal_contact,
         #     params={
@@ -345,6 +363,9 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
     curriculum = {
         "virtual_pd_assistance": CurriculumTermCfg(
             func=mdp.virtual_pd_assistance_curriculum,
+        ),
+        "object_reset_height": CurriculumTermCfg(
+            func=mdp.object_reset_height_curriculum,
         ),
         "feet_slip": CurriculumTermCfg(
             func=mdp.feet_slip_curriculum,

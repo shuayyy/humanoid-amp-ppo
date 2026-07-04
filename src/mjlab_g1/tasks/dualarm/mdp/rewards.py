@@ -25,6 +25,29 @@ def hand_to_toaster(
   return reward_per_hand.mean(dim=-1)
 
 
+def hands_near_markers(
+  env: G1DualarmManagerBasedRlEnv, d_scale: float = 0.15
+) -> torch.Tensor:
+  """Sharp, ungated bonus for getting BOTH palms onto the grasp markers.
+
+  Unlike ``hand_to_toaster`` (mean over hands, broad guidance), this is the
+  PRODUCT of the two per-hand proximities, so it only pays off when both hands
+  are simultaneously near their marker -- the precondition for the bilateral
+  contact that gates the main lift rewards. This breaks the exploration deadlock
+  where contact is never discovered.
+  """
+  dis = env._get_hand_toaster_dis()
+  dist = torch.norm(dis, dim=-1)  # [num_envs, 2]
+  prox = torch.exp(-dist / d_scale)  # [num_envs, 2]
+  return prox[:, 0] * prox[:, 1]
+
+
+def upright(env: G1DualarmManagerBasedRlEnv) -> torch.Tensor:
+  """Reward for keeping the torso vertical (projected gravity z ~= -1 upright)."""
+  proj_grav_z = env.robot.data.projected_gravity_b[:, 2]
+  return torch.clamp(-proj_grav_z, 0.0, 1.0)
+
+
 def dist_to_toaster(
   env: G1DualarmManagerBasedRlEnv, d_scale: float = 1.5
 ) -> torch.Tensor:

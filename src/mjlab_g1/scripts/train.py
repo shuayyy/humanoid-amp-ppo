@@ -40,6 +40,11 @@ class TrainConfig:
   registry_name: str | None = None
   video: bool = True
   video_length: int = 200
+  # Warm-start: path to a checkpoint whose ACTOR weights are loaded before
+  # training (iteration counter stays 0, optimizer/critic start fresh). Use with
+  # models/dualarm_from_locomotion.pt from transfer_locomotion_to_dualarm.py.
+  # Ignored when --agent.resume is set (resume takes precedence).
+  init_checkpoint: str | None = None
   enable_nan_guard: bool = False
   torchrunx_log_dir: str | None = None
   wandb_run_path: str | None = None
@@ -156,6 +161,26 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
   if resume_path is not None:
     print(f"[INFO]: Loading model checkpoint from: {resume_path}")
     runner.load(str(resume_path))
+  elif cfg.init_checkpoint is not None:
+    # Warm-start: load ONLY the actor (behavior prior). Keep iteration at 0 and
+    # start optimizer/critic/discriminator fresh so schedules/curricula run from
+    # the beginning against the new task.
+    init_path = Path(cfg.init_checkpoint)
+    if not init_path.exists():
+      raise FileNotFoundError(f"init_checkpoint not found: {init_path}")
+    print(f"[INFO]: Warm-starting actor from: {init_path}")
+    runner.load(
+      str(init_path),
+      load_cfg={
+        "actor": True,
+        "critic": False,
+        "optimizer": False,
+        "iteration": False,
+        "rnd": False,
+        "discriminator": False,
+      },
+      strict=True,
+    )
 
   # Only write config files from rank 0 to avoid race conditions.
   if rank == 0:
