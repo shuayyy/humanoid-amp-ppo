@@ -140,7 +140,15 @@ def run_play(task_id: str, cfg: PlayConfig):
   else:
     runner_cls = load_runner_cls(task_id) or OnPolicyRunner
     runner = runner_cls(env, asdict(agent_cfg), device=device)
-    runner.load(str(resume_path), map_location=device)
+    try:
+      runner.load(str(resume_path), map_location=device)
+    except RuntimeError as e:
+      error_str = str(e).lower()
+      if "size mismatch" in error_str and "discriminator" in error_str:
+        print("[WARN] Discriminator size mismatch (observation space changed), loading policy without discriminator state")
+        runner.load(str(resume_path), load_cfg={"discriminator": False}, map_location=device)
+      else:
+        raise
     policy = runner.get_inference_policy(device=device)
 
   # Handle "auto" viewer selection.
