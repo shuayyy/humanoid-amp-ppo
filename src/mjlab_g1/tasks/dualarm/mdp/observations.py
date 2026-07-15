@@ -46,6 +46,17 @@ def get_depth_features(
     return features
 
 
+def base_policy_action(env: G1DualarmManagerBasedRlEnv) -> torch.Tensor:
+    """The frozen locomotion base policy's most recent action (ResMimic:
+    condition the residual policy on what the base policy is doing).
+
+    Zero when residual mode is disabled so the obs layout stays fixed.
+    """
+    if env.base_policy is None:
+        return torch.zeros_like(env.action_manager.action)
+    return env.base_policy.last_action
+
+
 def foot_air_time(env: G1DualarmManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:
     sensor: ContactSensor = env.scene[sensor_name]
     sensor_data = sensor.data

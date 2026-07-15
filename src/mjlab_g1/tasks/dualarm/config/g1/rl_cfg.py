@@ -51,13 +51,23 @@ def unitree_g1_dualarm_ppo_runner_cfg() -> RslRlAMPOnPolicyRunnerCfg:
     experiment_name="g1_dualarm",
     amp_num_obs=67,
     amp_observation_mode="rich",
-    amp_reward_coef=10.0,
+    # AMP is a style regularizer, not the paycheck. Task rewards are
+    # dt-scaled (x0.02/step): full task success earns ~0.7/step and standing
+    # ~0.1/step. The additive AMP reward is coef * 0.02 * [0..1] per step, so
+    # coef 5 caps it at the standing baseline (0.1/step) and keeps the grasp
+    # discovery signal dominant. (The old (40 -> 10) schedule paid more for
+    # imitating the mocap than for completing the task.)
+    amp_reward_coef=2.0,
     amp_reward_schedule="piecewise_linear",
     amp_reward_schedule_points=(
-      (0, 40.0),
-      (500, 40.0),
-      (2_500, 10.0),
+      (0, 5.0),
+      (500, 5.0),
+      (2_500, 2.0),
     ),
+    # Style matters most during the reach, where task shaping is sparse and
+    # the annealed coef let v5 lunge instead of squatting like the mocap.
+    # Pre-lift envs use this coef; post-lift envs keep the schedule above.
+    amp_prelift_reward_coef=8.0,
     amp_motion_files="dataset/dualarm",
     save_interval=50,
     num_steps_per_env=24,

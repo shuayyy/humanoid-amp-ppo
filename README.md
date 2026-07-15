@@ -19,7 +19,32 @@ An AMP discriminator is trained on human motion data to help the humanoid RL pol
 
 [MP4 version](assets/dual_arm.mp4)
 
-TODO: Dual arm policy will be finetuned.
+### Dual-arm training (ResMimic-style residual learning)
+
+The dual-arm task trains a residual policy on top of a **frozen** locomotion
+actor (following [ResMimic](https://arxiv.org/abs/2510.05070)): the base
+policy supplies balance and whole-body coordination, and the RL policy learns
+task-specific corrections (`a = a_base + 0.3 * a_residual`). The base
+checkpoint (`models/locomotion.pt`) is part of the task's default env config,
+so training and play compose actions identically.
+
+Supporting mechanisms:
+
+- **Success-adaptive curricula** — the virtual object controller's assistance
+  and the object's reset-height bootstrap decay only while the lift-success
+  EMA stays above threshold, so difficulty self-regulates instead of following
+  a blind step schedule.
+- **Assistance-force penalty** — the policy is increasingly penalized for the
+  virtual-PD force actually used, paying it to take over the lift itself.
+- **AMP as a style regularizer** — the AMP reward coefficient is capped near
+  the task reward's standing baseline so imitating the mocap never outpays
+  completing the task.
+
+Train:
+
+```bash
+MUJOCO_GL=egl PYTHONPATH=src uv run python train_dualarm_from_locomotion.py
+```
 
 ## Codebase Structure
 

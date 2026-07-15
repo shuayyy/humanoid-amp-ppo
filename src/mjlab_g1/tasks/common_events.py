@@ -39,6 +39,9 @@ def _select_defaults(
     global_ids: torch.Tensor,
 ) -> torch.Tensor:
     defaults = env.sim.get_default_field(field)
+    if defaults.dim() == 1:
+        # Scalar-per-element field shared across envs (e.g. body_mass [nbody]).
+        return defaults[global_ids].unsqueeze(0).repeat(len(env_ids), 1)
     if defaults.dim() == 2:
         return defaults[global_ids].unsqueeze(0).repeat(len(env_ids), 1, 1)
     if defaults.dim() == 3:
@@ -67,6 +70,7 @@ def _sample_offsets(
 
 @requires_model_fields(
     "body_ipos",
+    "body_mass",
     "geom_friction",
     recompute=RecomputeLevel.set_const,
 )

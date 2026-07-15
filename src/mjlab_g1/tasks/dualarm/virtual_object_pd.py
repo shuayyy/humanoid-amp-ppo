@@ -46,6 +46,14 @@ class VirtualObjectPdController:
         self.grasp_site_ids = grasp_site_ids
         self.cfg = cfg
         self.reference_quat_w = toaster.data.root_link_quat_w.clone()
+        # Norm of the assistance force applied at the last `apply()` call.
+        # Read by the env to penalize reliance on the virtual controller
+        # (ResMimic-style: the policy is rewarded for making assistance
+        # unnecessary, so it learns to carry the object itself).
+        self.last_force_norm = torch.zeros(
+            toaster.data.root_link_pos_w.shape[0],
+            device=toaster.data.root_link_pos_w.device,
+        )
 
         assert len(object_body_ids) == 1
         assert len(grasp_site_ids) == 2
@@ -68,6 +76,10 @@ class VirtualObjectPdController:
             body_ids=self.object_body_ids,
             env_ids=env_ids,
         )
+        if env_ids is None:
+            self.last_force_norm.zero_()
+        else:
+            self.last_force_norm[env_ids] = 0.0
 
     @torch.no_grad()
     def reset(
@@ -146,6 +158,10 @@ class VirtualObjectPdController:
             max=1.0,
         )
         tau_w = tau_w * torque_clip_scale
+
+        self.last_force_norm.copy_(
+            torch.linalg.vector_norm(f_net_w, dim=-1)
+        )
 
         self.toaster.write_external_wrench_to_sim(
             forces=f_net_w[:, None, :],

@@ -54,18 +54,35 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
         ),
         "actions": ObservationTermCfg(func=mdp.last_action),
 
-        "object_pose": ObservationTermCfg(func=mdp.object_pose),
+        # Object-state observations carry perception-like noise: real object
+        # tracking is ~1-2 cm accurate, and a policy trained on perfect state
+        # becomes brittle the moment estimates jitter.
+        "object_pose": ObservationTermCfg(
+            func=mdp.object_pose,
+            noise=Unoise(n_min=-0.01, n_max=0.01),
+        ),
         "left_grasp_marker": ObservationTermCfg(
             func=mdp.left_grasp_marker_pos,
+            noise=Unoise(n_min=-0.01, n_max=0.01),
         ),
         "right_grasp_marker": ObservationTermCfg(
             func=mdp.right_grasp_marker_pos,
+            noise=Unoise(n_min=-0.01, n_max=0.01),
         ),
         "trajectory_reference_pos": ObservationTermCfg(
             func=mdp.trajectory_reference_pos,
+            noise=Unoise(n_min=-0.01, n_max=0.01),
         ),
-        "depth_features": ObservationTermCfg(
-            func=mdp.get_depth_features,
+        # Depth features are excluded by default (cfg.use_depth=False): the
+        # policy already gets privileged object state above, and the camera
+        # was the dominant GPU cost. env_cfgs.py re-adds this term together
+        # with the camera sensor when use_depth is enabled.
+        # "depth_features": ObservationTermCfg(func=mdp.get_depth_features),
+        # Frozen locomotion base policy's latest action (ResMimic: condition
+        # the residual on the base). Keep LAST so the proprio prefix layout
+        # stays byte-identical to the locomotion policy obs.
+        "base_action": ObservationTermCfg(
+            func=mdp.base_policy_action,
         ),
         # "vision": ObservationTermCfg(func=mdp.vision),
     }
@@ -120,7 +137,14 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
             entity_name="toaster",
             resampling_time_range=(1.0e9, 1.0e9),
             success_threshold=0.075,
-            difficulty="fixed",
+            # "fixed" hardcodes the target to (0.4, 0, 0.3) inside mjlab's
+            # LiftingCommand and ignores target_position_range entirely,
+            # which made position_error/at_goal/episode_success measure
+            # against a phantom z=0.3 target. "dynamic" with degenerate
+            # (equal-bound) ranges yields exactly (0, 0, 0.75); the env
+            # syncs XY to the toaster each step, so the metrics reduce to
+            # honest goal-height tracking.
+            difficulty="dynamic",
             target_position_range=LiftingCommandCfg.TargetPositionRangeCfg(
                 x=(0.0, 0.0),
                 y=(0.0, 0.0),
@@ -189,6 +213,33 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
                 },
             },
         ),
+        # Robustness: a lift policy trained on one fixed mass misjudges force
+        # on anything else. Per-env scale of the object's mass.
+        "object_mass": EventTermCfg(
+            mode="startup",
+            func=mdp.randomize_field,
+            params={
+                "asset_cfg": SceneEntityCfg("toaster", body_names=("object",)),
+                "operation": "scale",
+                "field": "body_mass",
+                "ranges": (0.7, 1.5),
+            },
+        ),
+        # Robustness: periodic velocity kicks on the base teach recovery and
+        # firm grasping instead of a fragile static equilibrium. Popped in
+        # play mode (see env_cfgs.py).
+        "push_robot": EventTermCfg(
+            func=mdp.push_by_setting_velocity,
+            mode="interval",
+            interval_range_s=(3.0, 6.0),
+            params={
+                "asset_cfg": SceneEntityCfg("robot"),
+                "velocity_range": {
+                    "x": (-0.3, 0.3),
+                    "y": (-0.3, 0.3),
+                },
+            },
+        ),
         "robot_friction": EventTermCfg(
             mode="startup",
             func=mdp.randomize_field,
@@ -251,14 +302,17 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
                 "min_reward_time_s": 1.0,
             },
         ),
+        # Firmer grip: 25 N target (10 N was modest for a ~1.3 kg object in
+        # motion) — squeezing harder means less slip as assistance anneals
+        # away and the robot bears the real load.
         "marker_force": RewardTermCfg(
             func=mdp.marker_force,
-            weight=2.0,
+            weight=3.0,
             params={
                 "left_sensor": "left_hand_toaster_contact",
                 "right_sensor": "right_hand_toaster_contact",
                 "min_reward_time_s": 0.5,
-                "target_force": 10.0,
+                "target_force": 25.0,
             },
         ),
         "hand_to_toaster": RewardTermCfg(
@@ -289,6 +343,23 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
                 "position_tolerance": 0.075,
             },
         ),
+        # Keep the object LEVEL, not just at the right height (v3 carried it
+        # tilted ~35 deg because nothing ever asked for orientation).
+        "object_orientation_tracking": RewardTermCfg(
+            func=mdp.object_orientation_tracking,
+            weight=5.0,
+            params={
+                "left_sensor": "left_hand_toaster_contact",
+                "right_sensor": "right_hand_toaster_contact",
+                "tolerance_rad": 0.35,
+            },
+        ),
+        # Natural carry posture during the hold (pelvis at standing height,
+        # normal stance width) — success alone allowed splits/lunges.
+        "hold_posture": RewardTermCfg(
+            func=mdp.hold_posture,
+            weight=5.0,
+        ),
         "missing_grasp_during_lift": RewardTermCfg(
             func=mdp.missing_grasp_during_lift,
             weight=0.0,
@@ -297,15 +368,63 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
                 "right_sensor": "right_hand_toaster_contact",
             },
         ),
+        # ResMimic take-over incentive: penalize the virtual-PD force actually
+        # used. Weight starts at 0 and is ramped in by the curriculum as the
+        # assistance scale decays, so the policy learns to carry the object
+        # itself instead of letting the controller do the lift.
+        "assist_force_penalty": RewardTermCfg(
+            func=mdp.virtual_assistance_force,
+            weight=0.0,
+        ),
+        # Direct gradient on the success condition: sustained hold at goal.
+        "hold_at_goal": RewardTermCfg(
+            func=mdp.hold_at_goal,
+            weight=5.0,
+        ),
         "feet_contact": RewardTermCfg(
             func=mdp.feet_contact,
             weight=2.5,
         ),
-        # Stand-first: give the robot a reason to stay upright and alive, since
-        # the contact-gated task rewards are ~0 until it learns to grasp.
+        # Torso verticality is only rewarded once the lift has started:
+        # rewarding it during the reach paid the policy to descend by leg
+        # splay (keeping the torso vertical) instead of a human hip hinge.
         "upright": RewardTermCfg(
             func=mdp.upright,
             weight=1.0,
+            params={"gate_on_lift": True},
+        ),
+        # v4 satisfied `upright` (pelvis) while folding the whole upper body
+        # at the waist. These three close the blind spots: torso_link
+        # verticality, joint-space waist fold, and where around the body the
+        # object is carried (v4 pinned it beside the right hip).
+        "torso_upright": RewardTermCfg(
+            func=mdp.torso_upright,
+            weight=2.0,
+            params={"gate_on_lift": True},
+        ),
+        "waist_deviation": RewardTermCfg(
+            func=mdp.waist_deviation_penalty,
+            weight=-1.0,
+        ),
+        "object_centered": RewardTermCfg(
+            func=mdp.object_centered,
+            weight=2.0,
+        ),
+        # v5 descended with a one-leg-back lunge (and held with a fore-aft
+        # stagger) instead of the mocap's symmetric squat: nothing priced
+        # asymmetry. Always-on so it also closes the hold stagger; the
+        # deadband keeps normal weight-shifting free.
+        "leg_symmetry": RewardTermCfg(
+            func=mdp.leg_symmetry_penalty,
+            weight=-1.0,
+        ),
+        # Soft always-on cost for feet wider than a normal stance: makes the
+        # splits/lunge family of strategies pay everywhere, including during
+        # the reach-down.
+        "stance_width": RewardTermCfg(
+            func=mdp.stance_width_penalty,
+            weight=-2.0,
+            params={"max_separation": 0.65},
         ),
         "alive": RewardTermCfg(
             func=env_mdp.is_alive,
@@ -320,36 +439,45 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
         #     weight=0.1,
         # ),
         "dof_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight=-0.1),
-        # "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.05),
+        # Smoothness: weights start at 0 and are ramped in by the smoothness
+        # curriculum as assistance decays (fidgeting was previously free).
+        "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=0.0),
+        "joint_vel_l2": RewardTermCfg(func=mdp.joint_vel_l2, weight=0.0),
         # "action_acc_l2": RewardTermCfg(func=mdp.action_acc_l2, weight=-0.01),
-        # "joint_vel_l2": RewardTermCfg(func=mdp.joint_vel_l2, weight=-1e-3),
         # "joint_acc_l2": RewardTermCfg(func=mdp.joint_acc_l2, weight=-5.0e-7),
         # "joint_torques_l2": RewardTermCfg(func=mdp.joint_torques_l2, weight=-1e-6),
         "self_collisions": RewardTermCfg(func=mdp.self_collision_cost, weight=-0.1, params={"sensor_name": "self_collision"}),
+        # Leg/toaster contact is PENALIZED, not terminal (see terminations):
+        # a knee brushing the object is recoverable, and terminating on it was
+        # the dominant early-episode killer.
         "illegal_contact": RewardTermCfg(
             func=mdp.illegal_contact_penalty,
-            weight=-1.0e-3,
+            weight=-0.05,
             params={
                 "sensor_names": (
                     "illegal_ground_contact",
-                    # "illegal_toaster_contact",
+                    "illegal_toaster_contact",
                 ),
             },
         ),
     }
     terminations = {
         "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
-        # Disabled for now to avoid immediately training a fall-termination policy.
-        # "fell_over": TerminationTermCfg(
-        #     func=mdp.bad_orientation,
-        #     params={"limit_angle": math.radians(70.0)},
-        # ),
+        # With the frozen locomotion base keeping the robot upright from step
+        # 0, early truncation of fallen states sharpens the value function
+        # instead of training a fall-then-wait policy.
+        "fell_over": TerminationTermCfg(
+            func=mdp.bad_orientation,
+            params={"limit_angle": math.radians(70.0)},
+        ),
+        # Only body-on-ground contact terminates (an unrecoverable state);
+        # leg/toaster contact is demoted to a penalty above — one brush no
+        # longer ends an otherwise-progressing episode.
         "illegal_contact": TerminationTermCfg(
             func=mdp.illegal_contact,
             params={
                 "sensor_names": (
                     "illegal_ground_contact",
-                    "illegal_toaster_contact",
                 ),
             },
         ),
@@ -372,6 +500,15 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
         ),
         "object_reset_height": CurriculumTermCfg(
             func=mdp.object_reset_height_curriculum,
+        ),
+        "object_spawn_range": CurriculumTermCfg(
+            func=mdp.object_spawn_range_curriculum,
+        ),
+        "assist_force_penalty": CurriculumTermCfg(
+            func=mdp.assist_force_penalty_curriculum,
+        ),
+        "smoothness": CurriculumTermCfg(
+            func=mdp.smoothness_curriculum,
         ),
         "feet_slip": CurriculumTermCfg(
             func=mdp.feet_slip_curriculum,

@@ -98,7 +98,7 @@ class AMPOnPolicyRunner(OnPolicyRunner):
                         amp_obs_frames,
                         rewards,
                         normalizer=self.alg.amp_normalizer,
-                        **amp_reward_mix,
+                        **self._phase_scheduled_mix(amp_reward_mix),
                     )
 
                     self.alg.process_env_step(
@@ -149,6 +149,31 @@ class AMPOnPolicyRunner(OnPolicyRunner):
         if self.logger.writer is not None:
             self.save(os.path.join(self.logger.log_dir, f"model_{self.current_learning_iteration}.pt"))  # type: ignore
             self.logger.stop_logging_writer()
+
+    def _phase_scheduled_mix(self, amp_reward_mix: dict) -> dict:
+        """Per-env AMP coefficient: boost the style reward before the lift.
+
+        Task shaping is sparse during the reach, so the annealed global coef
+        lets the policy pick any descent strategy (v5 lunged instead of the
+        mocap squat). Envs whose lift has not started get
+        ``amp_prelift_reward_coef`` instead of the scheduled coef; the
+        discriminator broadcasts a (num_envs, 1) coef tensor transparently.
+        No-op unless the config sets the coef and the env exposes lift phase.
+        """
+        prelift_coef = self.cfg.get("amp_prelift_reward_coef")
+        lift_progress = getattr(self.env.unwrapped, "_lift_progress", None)
+        if prelift_coef is None or lift_progress is None:
+            return amp_reward_mix
+
+        started, _ = lift_progress()
+        coef = torch.where(
+            started.to(self.device),
+            torch.tensor(
+                float(amp_reward_mix["amp_reward_coef"]), device=self.device
+            ),
+            torch.tensor(float(prelift_coef), device=self.device),
+        ).unsqueeze(-1)
+        return {**amp_reward_mix, "amp_reward_coef": coef}
 
     def _compute_amp_reward_mix(self, iteration: int) -> dict[str, float]:
         schedule = self.cfg.get("amp_reward_schedule", "constant")

@@ -45,6 +45,10 @@ class TrainConfig:
   # models/dualarm_from_locomotion.pt from transfer_locomotion_to_dualarm.py.
   # Ignored when --agent.resume is set (resume takes precedence).
   init_checkpoint: str | None = None
+  # Randomize initial episode lengths at the start of training. Good for
+  # locomotion; disable for trajectory-timed tasks (dual-arm lift) where the
+  # episode clock indexes the object reference trajectory.
+  init_at_random_ep_len: bool = True
   enable_nan_guard: bool = False
   torchrunx_log_dir: str | None = None
   wandb_run_path: str | None = None
@@ -181,6 +185,20 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
       },
       strict=True,
     )
+  elif getattr(cfg.env, "residual_base_checkpoint", None) is not None:
+    # ResMimic residual mode, fresh run: zero-init the residual actor's output
+    # layer so the composed action starts EXACTLY at the frozen base policy's
+    # behavior (exploration noise still flows through the Gaussian std). A
+    # randomly-initialized head would start by perturbing a working policy.
+    import torch
+
+    actor = runner.alg.get_policy()
+    linear_layers = [
+      m for m in actor.mlp.modules() if isinstance(m, torch.nn.Linear)
+    ]
+    torch.nn.init.zeros_(linear_layers[-1].weight)
+    torch.nn.init.zeros_(linear_layers[-1].bias)
+    print("[INFO]: Residual mode: zero-initialized the actor's output layer.")
 
   # Only write config files from rank 0 to avoid race conditions.
   if rank == 0:
@@ -188,7 +206,8 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
     dump_yaml(log_dir / "params" / "agent.yaml", agent_cfg)
 
   runner.learn(
-    num_learning_iterations=cfg.agent.max_iterations, init_at_random_ep_len=True
+    num_learning_iterations=cfg.agent.max_iterations,
+    init_at_random_ep_len=cfg.init_at_random_ep_len,
   )
 
   env.close()

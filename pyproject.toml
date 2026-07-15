@@ -12,7 +12,6 @@ requires-python = ">=3.12,<3.14"
 dependencies = [
     "mjlab",
     "onnxruntime",
-    "pybullet",
     "rsl-rl-lib",
     "pynput",
     "scipy",
@@ -30,6 +29,14 @@ play = "mjlab_g1.scripts.play:main"
 [tool.ruff]
 src = ["src"]  # Helpful for recognizing first-party imports.
 indent-width = 4
+
+[tool.uv]
+# mjlab sources mujoco from its nightly index (py.mujoco.org), which only
+# serves dev builds, and loosens its own `mujoco~=3.8.0` floor with this same
+# override in its [tool.uv]. uv does NOT inherit override-dependencies from
+# git dependencies, so we must mirror it here or resolution fails with
+# "only mujoco>=3.9.0.dev... is available".
+override-dependencies = ["mujoco>=3.8.0.dev0"]
 
 [tool.uv.sources]
 mjlab = { git = "https://github.com/mujocolab/mjlab.git", rev = "v1.4.0" }

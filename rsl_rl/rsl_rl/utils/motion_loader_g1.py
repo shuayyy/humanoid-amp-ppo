@@ -6,9 +6,6 @@ import logging
 
 import torch
 import numpy as np
-from pybullet_utils import transformations
-
-from rsl_rl.utils import motion_util
 
 _EPS = np.finfo(float).eps * 4.0
 
@@ -336,35 +333,7 @@ class G1_AMPLoader:
             times = self.traj_time_sample_batch(traj_idxs)
             return self.get_full_frame_at_time_batch(traj_idxs, times)
 
-    def blend_frame_pose(self, frame0, frame1, blend):
-        """Linearly interpolate between two frames, including orientation.
-
-        Args:
-            frame0: First frame to be blended corresponds to (blend = 0).
-            frame1: Second frame to be blended corresponds to (blend = 1).
-            blend: Float between [0, 1], specifying the interpolation between
-            the two frames.
-        Returns:
-            An interpolation of the two frames.
-        """
-        root_pos0, root_pos1 = G1_AMPLoader.get_root_pos(frame0), G1_AMPLoader.get_root_pos(frame1)
-        root_rot0, root_rot1 = G1_AMPLoader.get_root_rot(frame0), G1_AMPLoader.get_root_rot(frame1)
-        joints0, joints1 = G1_AMPLoader.get_joint_pose(frame0), G1_AMPLoader.get_joint_pose(frame1)
-        # tar_toe_pos_0, tar_toe_pos_1 = G1_AMPLoader.get_tar_toe_pos_local(frame0), G1_AMPLoader.get_tar_toe_pos_local(frame1)
-        linear_vel_0, linear_vel_1 = G1_AMPLoader.get_linear_vel(frame0), G1_AMPLoader.get_linear_vel(frame1)
-        angular_vel_0, angular_vel_1 = G1_AMPLoader.get_angular_vel(frame0), G1_AMPLoader.get_angular_vel(frame1)
-
-        blend_root_pos = self.slerp(root_pos0, root_pos1, blend)
-        blend_root_rot = transformations.quaternion_slerp(root_rot0.cpu().numpy(), root_rot1.cpu().numpy(), blend)
-        blend_root_rot = torch.tensor(motion_util.standardize_quaternion(blend_root_rot),dtype=torch.float32, device=self.device)
-        blend_joints = self.slerp(joints0, joints1, blend)
-        # blend_tar_toe_pos = self.slerp(tar_toe_pos_0, tar_toe_pos_1, blend)
-        blend_linear_vel = self.slerp(linear_vel_0, linear_vel_1, blend)
-        blend_angular_vel = self.slerp(angular_vel_0, angular_vel_1, blend)
-
-        return torch.cat([blend_root_pos, blend_root_rot, blend_linear_vel, blend_angular_vel, blend_joints])
-    
-    def feed_forward_generator_29dof_multi(self, num_mini_batch, mini_batch_size): 
+    def feed_forward_generator_29dof_multi(self, num_mini_batch, mini_batch_size):
         """Generates a batch of AMP transitions."""
         for _ in range(num_mini_batch):
             if self.preload_transitions:

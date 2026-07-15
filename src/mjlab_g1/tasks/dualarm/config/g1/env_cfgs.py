@@ -27,6 +27,13 @@ def unitree_g1_dualarm_env_cfg(play: bool = False) -> G1DualarmManagerBasedRlEnv
     "robot": get_g1_29dof_robot_cfg(),
     "toaster": get_toaster_cfg(),
   }
+
+  # ResMimic-style residual learning is the default for this task: the frozen
+  # locomotion actor supplies balance/whole-body coordination and the RL
+  # policy learns residual corrections. Setting it here (not just in the
+  # launcher) means train AND play compose actions identically. Override with
+  # --env.residual_base_checkpoint None for a from-scratch ablation.
+  cfg.residual_base_checkpoint = "models/locomotion.pt"
   #########################################################
   ##### terrain #####
   #########################################################
@@ -201,8 +208,22 @@ def unitree_g1_dualarm_env_cfg(play: bool = False) -> G1DualarmManagerBasedRlEnv
     right_hand_toaster_cfg,
     illegal_toaster_contact_cfg,
     illegal_ground_contact_cfg,
-    head_depth_cfg,
   )
+
+  # Depth perception is opt-in (see use_depth in the env cfg): the camera
+  # renders 224x224 per env and dominates GPU memory/time at scale, while the
+  # policy already receives privileged object state. When enabled, add both
+  # the sensor and the obs term back.
+  if cfg.use_depth:
+    from mjlab.managers.observation_manager import ObservationTermCfg
+
+    cfg.scene.sensors = (*cfg.scene.sensors, head_depth_cfg)
+    cfg.observations["policy"].terms["depth_features"] = ObservationTermCfg(
+      func=mdp.get_depth_features,
+    )
+    cfg.observations["critic"].terms["depth_features"] = ObservationTermCfg(
+      func=mdp.get_depth_features,
+    )
 
   joint_pos_action = cfg.actions["joint_pos"]
   assert isinstance(joint_pos_action, JointPositionActionCfg)
@@ -220,5 +241,11 @@ def unitree_g1_dualarm_env_cfg(play: bool = False) -> G1DualarmManagerBasedRlEnv
       "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
     }
     cfg.events.pop("push_robot", None)
+    # No training => no curriculum: disable the virtual PD outright and drop
+    # the adaptive curricula (their recovery branch would otherwise re-raise
+    # assistance during long play sessions). The env starts at final
+    # difficulty via eval_mode (zero assistance, ground spawn).
+    cfg.virtual_pd_cfg.enabled = False
+    cfg.curriculum = {}
 
   return cfg

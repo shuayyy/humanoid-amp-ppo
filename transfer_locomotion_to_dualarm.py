@@ -151,10 +151,15 @@ if __name__ == "__main__":
         output="models/dualarm_from_locomotion.pt",
     )
 
-    print("\n🚀 Next: train dual-arm warm-started from the locomotion actor:")
+    print("\n⚠️  NOTE: the dual-arm task now defaults to ResMimic-style residual")
+    print("learning (frozen locomotion base policy set in the task cfg), which")
+    print("supersedes this warm-start. Do NOT combine both — the locomotion")
+    print("prior would be applied twice. To use this warm-start instead of the")
+    print("residual base, disable the base policy explicitly:")
     print(
         "\nMUJOCO_GL=egl PYTHONPATH=src python src/mjlab_g1/scripts/train.py \\\n"
         "  Mjlab-G1-DualArm \\\n"
+        "  --env.residual_base_checkpoint None \\\n"
         f"  --init_checkpoint {output} \\\n"
         "  --env.scene.num_envs 4096"
     )
