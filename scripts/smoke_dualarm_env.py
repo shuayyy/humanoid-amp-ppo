@@ -63,17 +63,28 @@ def main() -> None:
     # The locomotion base may have envs mid-gait here, so an absolute bound
     # is wrong (that false assumption failed the first smoke run at ~1.4
     # rad). Structural check instead: the penalty must be exactly zero for
-    # every env not in double support.
+    # every env outside its gate (double support OR near the object — the
+    # proximity arm closes v6's single-support kneel loophole).
     left = env.scene["left_feet_ground_contact"].data.found
     right = env.scene["right_feet_ground_contact"].data.found
     double_support = (
         torch.any(left > 0, dim=-1) & torch.any(right > 0, dim=-1)
     )
-    sym = dualarm_rewards.leg_symmetry_penalty(env)
-    assert torch.all(sym[~double_support] == 0.0), (
-        "leg_symmetry_penalty must be gated off outside double support"
+    near_object = (
+        torch.linalg.vector_norm(
+            env.robot.data.root_link_pos_w[:, :2]
+            - env.toaster.data.root_link_pos_w[:, :2],
+            dim=-1,
+        )
+        < 0.7
     )
-    print(f"[INFO] double_support={double_support.float().mean():.2f} of envs, "
+    gate = double_support | near_object
+    sym = dualarm_rewards.leg_symmetry_penalty(env)
+    assert torch.all(sym[~gate] == 0.0), (
+        "leg_symmetry_penalty must be zero outside its gate"
+    )
+    print(f"[INFO] double_support={double_support.float().mean():.2f} "
+          f"near_object={near_object.float().mean():.2f} of envs, "
           f"leg_symmetry mean={sym.mean():.4f}")
 
     # Phase-scheduled AMP hook: pre-lift envs get the boosted coef.

@@ -145,20 +145,23 @@ def waist_deviation_penalty(
 def leg_symmetry_penalty(
   env: G1DualarmManagerBasedRlEnv,
   deadband_rad: float = 0.25,
+  near_radius_m: float = 0.7,
   left_sensor_name: str = "left_feet_ground_contact",
   right_sensor_name: str = "right_feet_ground_contact",
 ) -> torch.Tensor:
   """L1 left/right mismatch of hip-pitch and knee angles beyond a deadband,
-  applied only while BOTH feet are planted.
+  applied in double support OR within ``near_radius_m`` of the object.
 
   The mocap descends with a symmetric squat; v5 descended with a one-leg-back
-  lunge and held with a fore-aft stagger — both sustained double-support
-  stances that are maximally asymmetric in exactly these joints (sides share
-  sign conventions: the mocap squat bottoms out at |L-R| < 0.12 rad, so no
-  mirror flip is needed). The double-support gate exempts stepping, whose
-  mid-swing mismatch hits ~1.4 rad; the deadband exempts weight shifts. The
-  penalty targets asymmetry, not depth, so a deep squat stays free and the
-  v2/v3 failure (posture terms forbidding the descent) cannot recur.
+  lunge and held with a fore-aft stagger — maximally asymmetric in exactly
+  these joints (sides share sign conventions: the mocap squat bottoms out at
+  |L-R| < 0.12 rad, so no mirror flip is needed). A pure double-support gate
+  exempted stepping (mid-swing mismatch ~1.4 rad), but v6 exploited it by
+  descending single-support (kneel, mismatch ~3.5 rad, one foot unweighted).
+  The proximity term closes that hole: near the object there is no gait to
+  protect, so asymmetry is taxed regardless of support; far from it the
+  approach walk stays exempt. Targets asymmetry, not depth — a deep squat is
+  free at any distance, so the v2/v3 failure cannot recur.
   """
   left_sensor: ContactSensor = env.scene[left_sensor_name]
   right_sensor: ContactSensor = env.scene[right_sensor_name]
@@ -167,6 +170,15 @@ def leg_symmetry_penalty(
   double_support = torch.any(left_sensor.data.found > 0, dim=-1) & torch.any(
     right_sensor.data.found > 0, dim=-1
   )
+  near_object = (
+    torch.linalg.vector_norm(
+      env.robot.data.root_link_pos_w[:, :2]
+      - env.toaster.data.root_link_pos_w[:, :2],
+      dim=-1,
+    )
+    < near_radius_m
+  )
+  gate = double_support | near_object
 
   left_ids = torch.as_tensor(
     env.left_leg_sym_joint_ids, device=env.device, dtype=torch.long
@@ -181,7 +193,7 @@ def leg_symmetry_penalty(
     ),
     dim=-1,
   )
-  return torch.clamp(mismatch - deadband_rad, min=0.0) * double_support.float()
+  return torch.clamp(mismatch - deadband_rad, min=0.0) * gate.float()
 
 
 def object_centered(

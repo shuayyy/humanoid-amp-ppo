@@ -412,8 +412,8 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
         ),
         # v5 descended with a one-leg-back lunge (and held with a fore-aft
         # stagger) instead of the mocap's symmetric squat: nothing priced
-        # asymmetry. Always-on so it also closes the hold stagger; the
-        # deadband keeps normal weight-shifting free.
+        # asymmetry. Gated on double support OR proximity to the object —
+        # v6 dodged the pure double-support gate by kneeling single-support.
         "leg_symmetry": RewardTermCfg(
             func=mdp.leg_symmetry_penalty,
             weight=-1.0,
