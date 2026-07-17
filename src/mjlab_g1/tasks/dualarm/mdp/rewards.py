@@ -196,6 +196,122 @@ def leg_symmetry_penalty(
   return torch.clamp(mismatch - deadband_rad, min=0.0) * gate.float()
 
 
+def prelift_peak_asymmetry_penalty(
+  env: G1DualarmManagerBasedRlEnv,
+  deadband_rad: float = 0.25,
+  near_radius_m: float = 0.7,
+) -> torch.Tensor:
+  """One-shot charge at lift start for the PEAK leg asymmetry of the reach.
+
+  ``leg_symmetry`` is per-timestep, so v7/v8 learned to dive through the
+  lunge in ~0.5 s: a 3 rad mismatch integrated to ~-0.2/episode. Charging
+  the episode maximum once, when the lift triggers, removes the speed
+  discount — the dive costs the same at any velocity. Peak tracking uses
+  the proximity gate only (no double-support term): far from the object the
+  approach gait may swing freely; near it there is no gait to protect.
+
+  Returned value is divided by ``step_dt`` so the manager's dt-scaling
+  cancels and the weight reads directly as cost per rad of peak mismatch.
+  """
+  if not hasattr(env, "_prelift_peak_mismatch"):
+    env._prelift_peak_mismatch = torch.zeros(
+      env.num_envs, device=env.device
+    )
+    env._prelift_prev_started = torch.zeros(
+      env.num_envs, device=env.device, dtype=torch.bool
+    )
+  # Rewards are computed before resets, so the first step of a fresh episode
+  # arrives here with episode_length_buf == 1.
+  new_episode = env.episode_length_buf <= 1
+  env._prelift_peak_mismatch[new_episode] = 0.0
+  env._prelift_prev_started[new_episode] = False
+
+  started, _ = env._lift_progress()
+  near_object = (
+    torch.linalg.vector_norm(
+      env.robot.data.root_link_pos_w[:, :2]
+      - env.toaster.data.root_link_pos_w[:, :2],
+      dim=-1,
+    )
+    < near_radius_m
+  )
+  left_ids = torch.as_tensor(
+    env.left_leg_sym_joint_ids, device=env.device, dtype=torch.long
+  )
+  right_ids = torch.as_tensor(
+    env.right_leg_sym_joint_ids, device=env.device, dtype=torch.long
+  )
+  mismatch = torch.sum(
+    torch.abs(
+      env.robot.data.joint_pos[:, left_ids]
+      - env.robot.data.joint_pos[:, right_ids]
+    ),
+    dim=-1,
+  )
+  excess = torch.clamp(mismatch - deadband_rad, min=0.0)
+  tracking = (~started) & near_object
+  env._prelift_peak_mismatch = torch.maximum(
+    env._prelift_peak_mismatch, excess * tracking.float()
+  )
+
+  fire = started & ~env._prelift_prev_started
+  env._prelift_prev_started = started.clone()
+  return env._prelift_peak_mismatch * fire.float() / env.step_dt
+
+
+def descent_speed_penalty(
+  env: G1DualarmManagerBasedRlEnv,
+  max_descent_speed: float = 0.5,
+  near_radius_m: float = 0.7,
+) -> torch.Tensor:
+  """Squared excess of pelvis DOWNWARD speed near the object, pre-lift.
+
+  The v7/v8 reach is a ballistic snatch: the pelvis drops >1.5 m/s so every
+  per-timestep posture penalty only bites for a handful of frames. Capping
+  descent speed forces the drop to stretch over many timesteps, which gives
+  ``leg_symmetry`` (and the AMP discriminator) enough samples to shape it.
+  The mocap squat descends well under ``max_descent_speed``, so the target
+  motion is free; only the dive pays.
+  """
+  started, _ = env._lift_progress()
+  near_object = (
+    torch.linalg.vector_norm(
+      env.robot.data.root_link_pos_w[:, :2]
+      - env.toaster.data.root_link_pos_w[:, :2],
+      dim=-1,
+    )
+    < near_radius_m
+  )
+  descent = torch.clamp(-env.robot.data.root_link_lin_vel_w[:, 2], min=0.0)
+  excess = torch.clamp(descent - max_descent_speed, min=0.0)
+  return torch.square(excess) * ((~started) & near_object).float()
+
+
+def hold_foreaft_stagger_penalty(
+  env: G1DualarmManagerBasedRlEnv,
+  deadband_m: float = 0.2,
+) -> torch.Tensor:
+  """Fore-aft foot offset (pelvis frame) beyond a deadband, during the hold.
+
+  ``stance_width`` prices total separation and ``leg_symmetry`` is L1 on
+  hip-pitch/knee, which a mirrored offset can dodge — v7/v8 both hold with
+  one foot planted well ahead of the other. Measured along the pelvis x-axis
+  so lateral stance width stays free; gated on the hold so gait and the
+  (already-priced) reach are untouched.
+  """
+  holding = (env.success_hold_buf > 0).float()
+  feet_ids = torch.as_tensor(
+    env.feet_body_ids, device=env.device, dtype=torch.long
+  )
+  root_pos = env.robot.data.root_link_pos_w
+  root_quat = env.robot.data.root_link_quat_w
+  feet_pos = env.robot.data.body_link_pos_w[:, feet_ids]
+  rel_left = quat_apply_inverse(root_quat, feet_pos[:, 0] - root_pos)
+  rel_right = quat_apply_inverse(root_quat, feet_pos[:, 1] - root_pos)
+  stagger = torch.abs(rel_left[:, 0] - rel_right[:, 0])
+  return torch.clamp(stagger - deadband_m, min=0.0) * holding
+
+
 def object_centered(
   env: G1DualarmManagerBasedRlEnv,
   target_forward: float = 0.35,

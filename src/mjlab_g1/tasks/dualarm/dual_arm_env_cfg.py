@@ -418,6 +418,27 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
             func=mdp.leg_symmetry_penalty,
             weight=-1.0,
         ),
+        # v7/v8 beat the per-step leg_symmetry cost by DIVING through the
+        # lunge in ~0.5 s (speed is a discount on any per-timestep penalty).
+        # These two close the exploit from both ends: charge the reach's
+        # peak asymmetry once at lift start (speed no longer helps), and cap
+        # pelvis descent speed so the drop must stretch over enough frames
+        # for the per-step terms and the discriminator to see it.
+        "prelift_peak_asymmetry": RewardTermCfg(
+            func=mdp.prelift_peak_asymmetry_penalty,
+            weight=-2.0,
+        ),
+        "descent_speed": RewardTermCfg(
+            func=mdp.descent_speed_penalty,
+            weight=-5.0,
+        ),
+        # Both v7 and v8 hold with one foot planted well ahead of the other;
+        # stance_width only prices total separation, and a mirrored fore-aft
+        # offset is cheap under the L1 leg_symmetry term.
+        "hold_stagger": RewardTermCfg(
+            func=mdp.hold_foreaft_stagger_penalty,
+            weight=-2.0,
+        ),
         # Soft always-on cost for feet wider than a normal stance: makes the
         # splits/lunge family of strategies pay everywhere, including during
         # the reach-down.
