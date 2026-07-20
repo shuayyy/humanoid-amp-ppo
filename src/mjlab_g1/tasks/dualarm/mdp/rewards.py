@@ -287,6 +287,160 @@ def descent_speed_penalty(
   return torch.square(excess) * ((~started) & near_object).float()
 
 
+def low_straight_knee_penalty(
+  env: G1DualarmManagerBasedRlEnv,
+  knee_min_rad: float = 0.8,
+  pelvis_below_m: float = 0.62,
+  near_radius_m: float = 0.7,
+) -> torch.Tensor:
+  """One-shot charge at lift start for the episode-peak of straight-kneed
+  lowness during the reach.
+
+  Measured on the v10 policy (model_34550): the pike drops the pelvis to
+  ~0.40 m (p10) with the knees at -0.09 rad — dead straight — while the
+  mocap at the same depth has knees at 1.9-2.2 rad. Knee flexion separates
+  the strategies by 2 full radians, torso tilt by only ~20 deg, so this is
+  the axis to price. The v12 per-step version of this term was answered
+  with time compression (the dip below ``pelvis_below_m`` shrank to ~4
+  frames, tilt got MORE extreme); charging the episode maximum once at
+  lift start makes a 4-frame dip and a 4-second dip cost the same — the
+  pattern that already beat the asymmetric dive in v9. A squat of any
+  depth is free at any speed.
+
+  Returned value is divided by ``step_dt`` so the manager's dt-scaling
+  cancels and the weight reads as cost per rad of peak straightness.
+  """
+  if not hasattr(env, "_squat_knee_joint_ids"):
+    ids, _ = env.robot.find_joints(
+      ("left_knee_joint", "right_knee_joint"), preserve_order=True
+    )
+    env._squat_knee_joint_ids = torch.as_tensor(
+      ids, device=env.device, dtype=torch.long
+    )
+  if not hasattr(env, "_low_knee_peak"):
+    env._low_knee_peak = torch.zeros(env.num_envs, device=env.device)
+    env._low_knee_prev_started = torch.zeros(
+      env.num_envs, device=env.device, dtype=torch.bool
+    )
+  new_episode = env.episode_length_buf <= 1
+  env._low_knee_peak[new_episode] = 0.0
+  env._low_knee_prev_started[new_episode] = False
+
+  started, _ = env._lift_progress()
+  near_object = (
+    torch.linalg.vector_norm(
+      env.robot.data.root_link_pos_w[:, :2]
+      - env.toaster.data.root_link_pos_w[:, :2],
+      dim=-1,
+    )
+    < near_radius_m
+  )
+  low = env.robot.data.root_link_pos_w[:, 2] < pelvis_below_m
+  knees = env.robot.data.joint_pos[:, env._squat_knee_joint_ids].mean(dim=-1)
+  straightness = torch.clamp(knee_min_rad - knees, min=0.0)
+  # v13 dodged the height gate: 85% of episodes grab with the pelvis held
+  # just ABOVE pelvis_below_m (folding harder to reach) and only drop after
+  # the lift latches. The contact-settle window is the un-dodgeable gate:
+  # every lift must hold both marker contacts for lift_trigger_contact_steps
+  # before `started` latches, and in the mocap the knees are bent 1.9+ rad
+  # whenever the hands are on the box — at any pelvis height. Straight knees
+  # during settle IS the pike grab, wherever the pelvis sits.
+  settle = getattr(env, "contact_settle_buf", None)
+  grabbing = (
+    (settle > 0) if settle is not None else torch.zeros_like(low)
+  )
+  tracking = ((low & near_object) | grabbing) & (~started)
+  env._low_knee_peak = torch.maximum(
+    env._low_knee_peak, straightness * tracking.float()
+  )
+
+  fire = started & ~env._low_knee_prev_started
+  env._low_knee_prev_started = started.clone()
+  return env._low_knee_peak * fire.float() / env.step_dt
+
+
+def prelift_torso_pitch_penalty(
+  env: G1DualarmManagerBasedRlEnv,
+  # 0.9 (was 1.0): measured pike tilt is mean 0.90 / p90 1.23 rad, so the
+  # 1.0 deadband sat above the mean and collected ~nothing (-0.02/ep).
+  deadband_rad: float = 0.9,
+) -> torch.Tensor:
+  """Torso tilt beyond a deadband BEFORE the lift starts.
+
+  v10's ``squat_shaping`` carrot never fired: the policy stayed in the v9
+  pike (torso ~horizontal, knees straight) and the exp tail gives no usable
+  gradient from there. This prices the pike on every current episode, which
+  the existing terms cannot: ``torso_upright``/``waist_deviation`` are
+  lift-gated, and ``descent_speed`` watches the pelvis, which a pike never
+  drops. The deadband clears the mocap reach hinge (~0.9 rad max tilt)
+  while the pike (~1.5+ rad) pays. Speed cannot dodge it: the lift trigger
+  requires contacts held for ``lift_trigger_contact_steps`` while grasping
+  at box height, so a straight-legged policy sustains the fold for that
+  whole window no matter how fast it descends.
+  """
+  torso_ids = torch.as_tensor(
+    env.torso_body_id, device=env.device, dtype=torch.long
+  )
+  torso_quat_w = env.robot.data.body_link_quat_w[:, torso_ids[0]]
+  gravity_w = torch.zeros_like(env.robot.data.root_link_pos_w)
+  gravity_w[:, 2] = -1.0
+  proj_grav_z = quat_apply_inverse(torso_quat_w, gravity_w)[:, 2]
+  tilt = torch.acos(torch.clamp(-proj_grav_z, -1.0, 1.0))
+  started, _ = env._lift_progress()
+  return torch.clamp(tilt - deadband_rad, min=0.0) * (~started).float()
+
+
+def squat_shaping(
+  env: G1DualarmManagerBasedRlEnv,
+  near_radius_m: float = 0.7,
+  knee_target_rad: float = 2.0,
+  # 1.0 (was 0.6): with the policy starting knees-straight, the narrower
+  # scale left ~exp(-2.8) of gradient at the pike — too flat to climb.
+  knee_scale: float = 1.0,
+  pelvis_high_m: float = 0.65,
+  pelvis_low_m: float = 0.45,
+) -> torch.Tensor:
+  """Positive shaping for a mocap-style squat during the reach.
+
+  v9 satisfied every posture PENALTY with a symmetric pike: legs straight
+  and parallel, waist folded ~2 rad, pelvis never dropping. Nothing pays
+  for the posture the prior actually uses, and penalties only teach what
+  to avoid. This term pays for the squat's signature that a pike cannot
+  fake: deep knee flexion WITH a low pelvis (mocap bottom: pelvis 0.39-0.46,
+  knees 1.9-2.2 rad). The lowness ramp (zero above ``pelvis_high_m``, full
+  below ``pelvis_low_m``) keeps upright walking/holding unaffected, and a
+  bent-knee kneel cannot farm it: knee-ground contact terminates. Gated on
+  near-object pre-lift, and bounded, so lifting still dominates hovering.
+  """
+  if not hasattr(env, "_squat_knee_joint_ids"):
+    ids, _ = env.robot.find_joints(
+      ("left_knee_joint", "right_knee_joint"), preserve_order=True
+    )
+    env._squat_knee_joint_ids = torch.as_tensor(
+      ids, device=env.device, dtype=torch.long
+    )
+  started, _ = env._lift_progress()
+  near_object = (
+    torch.linalg.vector_norm(
+      env.robot.data.root_link_pos_w[:, :2]
+      - env.toaster.data.root_link_pos_w[:, :2],
+      dim=-1,
+    )
+    < near_radius_m
+  )
+  knees = env.robot.data.joint_pos[:, env._squat_knee_joint_ids].mean(dim=-1)
+  knee_reward = torch.exp(
+    -torch.abs(knees - knee_target_rad) / max(knee_scale, 1.0e-6)
+  )
+  pelvis_z = env.robot.data.root_link_pos_w[:, 2]
+  lowness = torch.clamp(
+    (pelvis_high_m - pelvis_z) / max(pelvis_high_m - pelvis_low_m, 1.0e-6),
+    0.0,
+    1.0,
+  )
+  return knee_reward * lowness * ((~started) & near_object).float()
+
+
 def hold_foreaft_stagger_penalty(
   env: G1DualarmManagerBasedRlEnv,
   deadband_m: float = 0.2,
