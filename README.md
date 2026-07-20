@@ -251,7 +251,6 @@ Task and training:
 Infrastructure:
 
 - [ ] Add a `LICENSE` file. `pyproject.toml` declares Apache-2.0 but the license text is absent.
-- [ ] Reconsider gitignoring `uv.lock`. Committing it would make runs reproducible across machines, which matters for comparing experiments.
 - [ ] Add a regression test for the reward terms. `smoke_dualarm_env.py` covers construction and gating, but nothing pins numerical behavior.
 - [ ] Untrack `models/snapshots/` if the historical checkpoints are no longer needed for comparison, and consider rewriting history to drop the artifact blobs.
 - [ ] Consolidate the sbatch scripts, which share a large preamble.
