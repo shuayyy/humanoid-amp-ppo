@@ -90,6 +90,22 @@ class G1DualarmManagerBasedRlEnvCfg(ManagerBasedRlEnvCfg):
     # encoder is frozen, so chunking is exact (job 2088161 failure).
     depth_encode_chunk_size: int = 2048
 
+    # Reference-state initialization (RSI): initialize this fraction of
+    # resets from mocap squat-phase frames (robot qpos from the clip, zero
+    # velocities, box placed at the hands). v9-v14 established that no
+    # reward pressure makes the policy EXPLORE into the squat basin — it
+    # pays a -3.8/episode peak charge indefinitely rather than bend its
+    # knees. RSI puts the basin directly into the state distribution so
+    # the value function learns it pays; 0 disables.
+    rsi_fraction: float = 0.0
+    rsi_dataset_dir: str = "dataset/dualarm"
+    # Squat-phase filter on clip frames: pelvis z within this range
+    # (mocap bottom 0.39-0.46; standing 0.78).
+    rsi_pelvis_z_range: tuple[float, float] = (0.30, 0.55)
+    # Box placement for RSI resets: this far ahead of the pelvis along its
+    # heading (the mocap reach/hold hand offset).
+    rsi_object_forward_m: float = 0.35
+
     # Success-adaptive curricula (ResMimic-style): instead of blind step
     # schedules, assistance/bootstrap difficulty decays only when the policy
     # demonstrably succeeds (object at goal height AND both grasp contacts
@@ -370,6 +386,33 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         self.trajectory_goal_pos_w = self.trajectory_start_pos_w.clone()
         self.trajectory_goal_pos_w[:, 2] += self.cfg.trajectory_lift_delta_z
 
+        # RSI frame bank: mocap squat-phase poses (qpos[36]: root pos+quat,
+        # 29 joints in model order — same layout test/play_dataset.py replays).
+        self._rsi_frames = None
+        if self.cfg.rsi_fraction > 0.0:
+            import numpy as np
+            from pathlib import Path
+
+            lo, hi = self.cfg.rsi_pelvis_z_range
+            banks = []
+            for path in sorted(Path(self.cfg.rsi_dataset_dir).glob("*.npy")):
+                q = np.load(path, allow_pickle=True)[:, :36].astype("float32")
+                mask = (q[:, 2] >= lo) & (q[:, 2] <= hi)
+                banks.append(q[mask])
+            frames = np.concatenate(banks, axis=0)
+            assert frames.shape[0] > 0, (
+                f"No RSI frames with pelvis z in [{lo}, {hi}] under "
+                f"{self.cfg.rsi_dataset_dir}"
+            )
+            assert frames.shape[1] - 7 == self.robot.data.default_joint_pos.shape[1], (
+                "RSI frame joint count does not match the robot"
+            )
+            self._rsi_frames = torch.as_tensor(frames, device=self.device)
+            print_info(
+                f"[RSI] {self._rsi_frames.shape[0]} squat-phase frames, "
+                f"fraction {self.cfg.rsi_fraction}"
+            )
+
         self.depth_encoder = None
         self.depth_feature_buf = None
         if self.cfg.use_depth:
@@ -615,6 +658,39 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         robot_root_state[:, :3] += env_origins
         self.robot.write_root_state_to_sim(robot_root_state, env_ids)
 
+        # Reference-state initialization: drop a fraction of resets INTO the
+        # mocap squat (zero velocities), so the squat basin is experienced
+        # rather than discovered — v9-v14 showed no reward pressure gets a
+        # converged pike policy to explore a coordinated 2-rad knee bend.
+        rsi_mask = None
+        rsi_frames = None
+        if self._rsi_frames is not None:
+            rsi_mask = (
+                torch.rand(env_ids.numel(), device=self.device)
+                < self.cfg.rsi_fraction
+            )
+            if rsi_mask.any():
+                rsi_ids = env_ids[rsi_mask]
+                idx = torch.randint(
+                    self._rsi_frames.shape[0],
+                    (rsi_ids.numel(),),
+                    device=self.device,
+                )
+                rsi_frames = self._rsi_frames[idx]
+                rsi_root = torch.zeros(
+                    rsi_ids.numel(), 13, device=self.device
+                )
+                rsi_root[:, :7] = rsi_frames[:, :7]
+                rsi_root[:, :3] += self.scene.env_origins[rsi_ids]
+                self.robot.write_root_state_to_sim(rsi_root, rsi_ids)
+                self.robot.write_joint_state_to_sim(
+                    rsi_frames[:, 7:],
+                    torch.zeros_like(rsi_frames[:, 7:]),
+                    env_ids=rsi_ids,
+                )
+            else:
+                rsi_mask = None
+
         toaster_root_state = self.toaster.data.default_root_state[env_ids].clone()
         toaster_root_state[:, :3] += env_origins
 
@@ -646,6 +722,34 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         goal_z = toaster_root_state[:, 2] + self.cfg.trajectory_lift_delta_z
         bootstrap_dz = self.object_reset_height_frac * self.cfg.trajectory_lift_delta_z
         toaster_root_state[:, 2] += bootstrap_dz
+
+        # RSI resets: box on the ground at the squatting robot's hands —
+        # rsi_object_forward_m ahead of the pelvis along its heading, yaw
+        # aligned with the robot so the grasp markers face the palms
+        # (overrides the spawn randomization for these rows).
+        if rsi_mask is not None:
+            assert rsi_frames is not None
+            fq = rsi_frames[:, 3:7]  # (w, x, y, z)
+            fwd = torch.stack(
+                (
+                    1.0 - 2.0 * (fq[:, 2] ** 2 + fq[:, 3] ** 2),
+                    2.0 * (fq[:, 1] * fq[:, 2] + fq[:, 0] * fq[:, 3]),
+                ),
+                dim=-1,
+            )
+            fwd = fwd / fwd.norm(dim=-1, keepdim=True).clamp_min(1.0e-6)
+            pelvis_xy = (
+                rsi_frames[:, :2] + self.scene.env_origins[env_ids[rsi_mask], :2]
+            )
+            toaster_root_state[rsi_mask, :2] = (
+                pelvis_xy + self.cfg.rsi_object_forward_m * fwd
+            )
+            half_yaw = 0.5 * torch.atan2(fwd[:, 1], fwd[:, 0])
+            zeros = torch.zeros_like(half_yaw)
+            toaster_root_state[rsi_mask, 3:7] = torch.stack(
+                (torch.cos(half_yaw), zeros, zeros, torch.sin(half_yaw)),
+                dim=-1,
+            )
 
         self.toaster.write_root_state_to_sim(toaster_root_state, env_ids)
         assert self.virtual_pd_controller is not None
