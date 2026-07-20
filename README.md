@@ -5,6 +5,7 @@
   <a href="#quickstart">Quickstart</a> &nbsp;|&nbsp;
   <a href="#tasks">Tasks</a> &nbsp;|&nbsp;
   <a href="#dual-arm-task-design">Design Notes</a> &nbsp;|&nbsp;
+  <a href="#todo">TODO</a> &nbsp;|&nbsp;
   <a href="#troubleshooting">Troubleshooting</a> &nbsp;|&nbsp;
   <a href="#citation">Citation</a>
 </p>
@@ -17,17 +18,14 @@
 
 <p align="center">
   <img width="45%" src="assets/locomotion.gif" alt="Locomotion policy">
-  <img width="45%" src="assets/dual_arm.gif" alt="Dual-arm policy">
+  <img width="45%" src="assets/dual_arm_v5.gif" alt="Dual-arm policy">
 </p>
-
--------
-
-## Latest Updates
-
-- **[Jul 2026]** Reference-state initialization: a configurable fraction of resets now starts inside a motion-capture squat frame with the object at the hands.
-- **[Jul 2026]** Fixed the reachability bound on leg joints. `residual_scale_legs` capped the commandable knee angle below what the reference squat requires, which made the target posture unreachable regardless of reward. See [Design Notes](#reachability-comes-before-reward).
-- **[Jul 2026]** Phase-scheduled AMP — pre-lift environments use a separate discriminator reward coefficient, since style matters most during the reach where task shaping is sparsest.
-- **[Jul 2026]** Posture evaluation tooling (`scripts/eval_posture_stats.py`) reporting statistics split by reach, grab and hold phase.
+<p align="center">
+  <sub>
+    Locomotion (<a href="assets/locomotion.mp4">mp4</a>) &nbsp;·&nbsp;
+    Dual-arm lift (<a href="assets/dual_arm_v5.mp4">mp4</a>)
+  </sub>
+</p>
 
 -------
 
@@ -176,6 +174,10 @@ Two tools are worth running before drawing conclusions from a training curve:
   and steps it, so sign and magnitude errors surface in minutes instead of
   after a long job. Run it after any reward change.
 
+Comparing a policy against the motion prior it was trained on is the most
+direct read on style. `assets/prior_vs_policy_v5.png` is an example of that
+comparison for the dual-arm carry.
+
 -------
 
 ## Dual-arm task design
@@ -232,6 +234,27 @@ Several reach-phase posture penalties remain defined in `rewards.py` but are
 not in the active reward set. They were built to price a descent the policy had
 no choice but to make while the squat was unreachable. Re-add them individually
 if a specific failure reappears, rather than as a block.
+
+-------
+
+## TODO
+
+Task and training:
+
+- [ ] **Squat descent.** The dual-arm policy reaches the box by folding at the waist with straight legs instead of squatting like the motion prior. Leg authority was the blocker and is fixed; whether the prior alone now shapes the descent is being tested by a from-scratch run.
+- [ ] Recover lift success after the leg-authority change — earlier fine-tunes traded `at_goal` down from 1.0 while adapting.
+- [ ] Decide the fate of the inactive reach-phase penalties in `rewards.py`: delete them if the motion prior proves sufficient, or re-add the ones that earn their place.
+- [ ] Revisit the locomotion task, which has not been touched since the dual-arm work began.
+- [ ] Exercise the depth pathway. DeFM features are wired up but `use_depth` is off by default, so that code path is untested at scale.
+- [ ] Carry-to-goal is unimplemented; the task is lift-in-place only.
+
+Infrastructure:
+
+- [ ] Add a `LICENSE` file. `pyproject.toml` declares Apache-2.0 but the license text is absent.
+- [ ] Reconsider gitignoring `uv.lock`. Committing it would make runs reproducible across machines, which matters for comparing experiments.
+- [ ] Add a regression test for the reward terms. `smoke_dualarm_env.py` covers construction and gating, but nothing pins numerical behavior.
+- [ ] Untrack `models/snapshots/` if the historical checkpoints are no longer needed for comparison, and consider rewriting history to drop the artifact blobs.
+- [ ] Consolidate the sbatch scripts, which share a large preamble.
 
 -------
 
