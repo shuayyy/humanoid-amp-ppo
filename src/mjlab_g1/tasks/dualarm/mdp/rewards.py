@@ -14,6 +14,78 @@ if TYPE_CHECKING:
   from mjlab_g1.envs.g1_dualarm_rl_env import G1DualarmManagerBasedRlEnv
 
 
+def _near_object(
+  env: G1DualarmManagerBasedRlEnv, radius_m: float
+) -> torch.Tensor:
+  """Whether the pelvis is within ``radius_m`` of the object in the XY plane.
+
+  Posture terms that act on the reach share this gate: near the object there
+  is no gait to protect, so a descent posture can be priced regardless of
+  support state, while the approach walk further out stays exempt.
+  """
+  return (
+    torch.linalg.vector_norm(
+      env.robot.data.root_link_pos_w[:, :2]
+      - env.toaster.data.root_link_pos_w[:, :2],
+      dim=-1,
+    )
+    < radius_m
+  )
+
+
+def _knee_joint_ids(env: G1DualarmManagerBasedRlEnv) -> torch.Tensor:
+  """Cached left/right knee joint indices."""
+  if not hasattr(env, "_squat_knee_joint_ids"):
+    ids, _ = env.robot.find_joints(
+      ("left_knee_joint", "right_knee_joint"), preserve_order=True
+    )
+    env._squat_knee_joint_ids = torch.as_tensor(
+      ids, device=env.device, dtype=torch.long
+    )
+  return env._squat_knee_joint_ids
+
+
+def _episode_peak(
+  env: G1DualarmManagerBasedRlEnv,
+  name: str,
+  value: torch.Tensor,
+  tracking: torch.Tensor,
+) -> torch.Tensor:
+  """Accumulate ``value``'s episode maximum over ``tracking`` steps, and
+  release it as a one-shot charge on the step the lift starts.
+
+  Per-timestep posture penalties are speed-discounted: crossing a bad
+  posture quickly costs almost nothing, so the policy learns to hurry rather
+  than to avoid it. Charging the episode peak exactly once makes a brief
+  excursion and a sustained one cost the same.
+
+  The result is divided by ``step_dt`` so the reward manager's dt scaling
+  cancels and the configured weight reads as cost per unit of ``value``.
+  """
+  peak_attr, prev_attr = f"_peak_{name}", f"_peak_{name}_prev_started"
+  if not hasattr(env, peak_attr):
+    setattr(env, peak_attr, torch.zeros(env.num_envs, device=env.device))
+    setattr(
+      env,
+      prev_attr,
+      torch.zeros(env.num_envs, device=env.device, dtype=torch.bool),
+    )
+  peak, prev_started = getattr(env, peak_attr), getattr(env, prev_attr)
+
+  # Rewards are computed before resets, so a fresh episode arrives here with
+  # episode_length_buf == 1.
+  new_episode = env.episode_length_buf <= 1
+  peak[new_episode] = 0.0
+  prev_started[new_episode] = False
+
+  started, _ = env._lift_progress()
+  peak = torch.maximum(peak, value * tracking.float())
+  fire = started & ~prev_started
+  setattr(env, peak_attr, peak)
+  setattr(env, prev_attr, started.clone())
+  return peak * fire.float() / env.step_dt
+
+
 def get_object_pose(env: G1DualarmManagerBasedRlEnv) -> torch.Tensor:
     obj_pos_w = env.toaster.data.root_link_pos_w[:, :3]
     obj_quat_w = env.toaster.data.root_link_quat_w
@@ -170,15 +242,7 @@ def leg_symmetry_penalty(
   double_support = torch.any(left_sensor.data.found > 0, dim=-1) & torch.any(
     right_sensor.data.found > 0, dim=-1
   )
-  near_object = (
-    torch.linalg.vector_norm(
-      env.robot.data.root_link_pos_w[:, :2]
-      - env.toaster.data.root_link_pos_w[:, :2],
-      dim=-1,
-    )
-    < near_radius_m
-  )
-  gate = double_support | near_object
+  gate = double_support | _near_object(env, near_radius_m)
 
   left_ids = torch.as_tensor(
     env.left_leg_sym_joint_ids, device=env.device, dtype=torch.long
@@ -209,32 +273,8 @@ def prelift_peak_asymmetry_penalty(
   discount — the dive costs the same at any velocity. Peak tracking uses
   the proximity gate only (no double-support term): far from the object the
   approach gait may swing freely; near it there is no gait to protect.
-
-  Returned value is divided by ``step_dt`` so the manager's dt-scaling
-  cancels and the weight reads directly as cost per rad of peak mismatch.
   """
-  if not hasattr(env, "_prelift_peak_mismatch"):
-    env._prelift_peak_mismatch = torch.zeros(
-      env.num_envs, device=env.device
-    )
-    env._prelift_prev_started = torch.zeros(
-      env.num_envs, device=env.device, dtype=torch.bool
-    )
-  # Rewards are computed before resets, so the first step of a fresh episode
-  # arrives here with episode_length_buf == 1.
-  new_episode = env.episode_length_buf <= 1
-  env._prelift_peak_mismatch[new_episode] = 0.0
-  env._prelift_prev_started[new_episode] = False
-
   started, _ = env._lift_progress()
-  near_object = (
-    torch.linalg.vector_norm(
-      env.robot.data.root_link_pos_w[:, :2]
-      - env.toaster.data.root_link_pos_w[:, :2],
-      dim=-1,
-    )
-    < near_radius_m
-  )
   left_ids = torch.as_tensor(
     env.left_leg_sym_joint_ids, device=env.device, dtype=torch.long
   )
@@ -249,14 +289,12 @@ def prelift_peak_asymmetry_penalty(
     dim=-1,
   )
   excess = torch.clamp(mismatch - deadband_rad, min=0.0)
-  tracking = (~started) & near_object
-  env._prelift_peak_mismatch = torch.maximum(
-    env._prelift_peak_mismatch, excess * tracking.float()
+  return _episode_peak(
+    env,
+    "prelift_asymmetry",
+    excess,
+    (~started) & _near_object(env, near_radius_m),
   )
-
-  fire = started & ~env._prelift_prev_started
-  env._prelift_prev_started = started.clone()
-  return env._prelift_peak_mismatch * fire.float() / env.step_dt
 
 
 def descent_speed_penalty(
@@ -274,17 +312,10 @@ def descent_speed_penalty(
   motion is free; only the dive pays.
   """
   started, _ = env._lift_progress()
-  near_object = (
-    torch.linalg.vector_norm(
-      env.robot.data.root_link_pos_w[:, :2]
-      - env.toaster.data.root_link_pos_w[:, :2],
-      dim=-1,
-    )
-    < near_radius_m
-  )
   descent = torch.clamp(-env.robot.data.root_link_lin_vel_w[:, 2], min=0.0)
   excess = torch.clamp(descent - max_descent_speed, min=0.0)
-  return torch.square(excess) * ((~started) & near_object).float()
+  gate = (~started) & _near_object(env, near_radius_m)
+  return torch.square(excess) * gate.float()
 
 
 def low_straight_knee_penalty(
@@ -306,37 +337,10 @@ def low_straight_knee_penalty(
   lift start makes a 4-frame dip and a 4-second dip cost the same — the
   pattern that already beat the asymmetric dive in v9. A squat of any
   depth is free at any speed.
-
-  Returned value is divided by ``step_dt`` so the manager's dt-scaling
-  cancels and the weight reads as cost per rad of peak straightness.
   """
-  if not hasattr(env, "_squat_knee_joint_ids"):
-    ids, _ = env.robot.find_joints(
-      ("left_knee_joint", "right_knee_joint"), preserve_order=True
-    )
-    env._squat_knee_joint_ids = torch.as_tensor(
-      ids, device=env.device, dtype=torch.long
-    )
-  if not hasattr(env, "_low_knee_peak"):
-    env._low_knee_peak = torch.zeros(env.num_envs, device=env.device)
-    env._low_knee_prev_started = torch.zeros(
-      env.num_envs, device=env.device, dtype=torch.bool
-    )
-  new_episode = env.episode_length_buf <= 1
-  env._low_knee_peak[new_episode] = 0.0
-  env._low_knee_prev_started[new_episode] = False
-
   started, _ = env._lift_progress()
-  near_object = (
-    torch.linalg.vector_norm(
-      env.robot.data.root_link_pos_w[:, :2]
-      - env.toaster.data.root_link_pos_w[:, :2],
-      dim=-1,
-    )
-    < near_radius_m
-  )
   low = env.robot.data.root_link_pos_w[:, 2] < pelvis_below_m
-  knees = env.robot.data.joint_pos[:, env._squat_knee_joint_ids].mean(dim=-1)
+  knees = env.robot.data.joint_pos[:, _knee_joint_ids(env)].mean(dim=-1)
   straightness = torch.clamp(knee_min_rad - knees, min=0.0)
   # v13 dodged the height gate: 85% of episodes grab with the pelvis held
   # just ABOVE pelvis_below_m (folding harder to reach) and only drop after
@@ -349,14 +353,13 @@ def low_straight_knee_penalty(
   grabbing = (
     (settle > 0) if settle is not None else torch.zeros_like(low)
   )
-  tracking = ((low & near_object) | grabbing) & (~started)
-  env._low_knee_peak = torch.maximum(
-    env._low_knee_peak, straightness * tracking.float()
+  low_and_near = low & _near_object(env, near_radius_m)
+  return _episode_peak(
+    env,
+    "low_straight_knee",
+    straightness,
+    (low_and_near | grabbing) & (~started),
   )
-
-  fire = started & ~env._low_knee_prev_started
-  env._low_knee_prev_started = started.clone()
-  return env._low_knee_peak * fire.float() / env.step_dt
 
 
 def prelift_torso_pitch_penalty(
@@ -412,23 +415,8 @@ def squat_shaping(
   bent-knee kneel cannot farm it: knee-ground contact terminates. Gated on
   near-object pre-lift, and bounded, so lifting still dominates hovering.
   """
-  if not hasattr(env, "_squat_knee_joint_ids"):
-    ids, _ = env.robot.find_joints(
-      ("left_knee_joint", "right_knee_joint"), preserve_order=True
-    )
-    env._squat_knee_joint_ids = torch.as_tensor(
-      ids, device=env.device, dtype=torch.long
-    )
   started, _ = env._lift_progress()
-  near_object = (
-    torch.linalg.vector_norm(
-      env.robot.data.root_link_pos_w[:, :2]
-      - env.toaster.data.root_link_pos_w[:, :2],
-      dim=-1,
-    )
-    < near_radius_m
-  )
-  knees = env.robot.data.joint_pos[:, env._squat_knee_joint_ids].mean(dim=-1)
+  knees = env.robot.data.joint_pos[:, _knee_joint_ids(env)].mean(dim=-1)
   knee_reward = torch.exp(
     -torch.abs(knees - knee_target_rad) / max(knee_scale, 1.0e-6)
   )
@@ -438,7 +426,8 @@ def squat_shaping(
     0.0,
     1.0,
   )
-  return knee_reward * lowness * ((~started) & near_object).float()
+  gate = (~started) & _near_object(env, near_radius_m)
+  return knee_reward * lowness * gate.float()
 
 
 def hold_foreaft_stagger_penalty(
