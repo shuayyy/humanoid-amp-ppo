@@ -11,34 +11,35 @@ uv.lock
 # Virtual environments
 .venv
 
-# Logs and databases
-video
-wandb
+# Editors
+.vscode/
+
+# Training outputs and experiment artifacts
 logs
+wandb
 training_logs/
 agents
-AMP_feature.md
-src.zip
+video
+models/videos/
+
+# Datasets not used by the current tasks
 dataset/old
-src.zip
+
+# Local scratch notes, kept out of the shared history
+AMP_feature.md
+AMP_TODO.md
 DEBUG.md
-REWARD.md
-.gitignore
-README_TASK_SPLIT.md
-.gitignore
 PROJECT_INFO_FOR_CHATGPT.md
-DEBUG.md
+README_TASK_SPLIT.md
+REWARD.md
+TODO.md
 references.md
-DEBUG.md
-DEBUG.md
-REWARD.md
-REWARD.md
-DEBUG.md
+vision.md
+
+# Archives and superseded trees
+rsl_rl_old/
+src.zip
+
+# Tests: only the dataset player is shared
 test/*
 !test/play_dataset.py
-.vscode/
-TODO.md
-vision.md
-rsl_rl_old/
-AMP_TODO.md
-models/videos/v6/frames/
