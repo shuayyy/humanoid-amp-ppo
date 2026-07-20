@@ -21,6 +21,9 @@ training_logs/
 agents
 video
 models/videos/
+# Intermediate training checkpoints; released policies are tracked by name
+models/model_*.pt
+models/snapshots/
 
 # Datasets not used by the current tasks
 dataset/old
