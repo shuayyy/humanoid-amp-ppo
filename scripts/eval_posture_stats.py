@@ -73,9 +73,15 @@ def main() -> None:
 
     records: dict[str, list[torch.Tensor]] = {k: [] for k in (
         "prelift_leg_mismatch", "prelift_pelvis_z",
+        "prelift_torso_tilt_deg", "prelift_knee_mean",
+        "settle_knee_mean", "settle_pelvis_z",
         "hold_leg_mismatch", "hold_pelvis_z", "hold_torso_pitch_deg",
         "hold_waist_dev", "hold_obj_forward", "hold_obj_lateral",
     )}
+    knee_ids, _ = env.robot.find_joints(
+        ("left_knee_joint", "right_knee_joint"), preserve_order=True
+    )
+    knee_ids = torch.as_tensor(knee_ids, device=device, dtype=torch.long)
 
     obs = wrapped.get_observations().to(device)
     with torch.inference_mode():
@@ -92,16 +98,37 @@ def main() -> None:
             started, _ = env._lift_progress()
             holding = env.success_hold_buf > 0
 
+            torso_quat = env.robot.data.body_link_quat_w[:, torso_id]
+            g = torch.zeros(env.num_envs, 3, device=device)
+            g[:, 2] = -1.0
+            proj = quat_apply_inverse(torso_quat, g)
+            pitch_deg = torch.rad2deg(torch.asin(proj[:, 0].clamp(-1, 1)))
+            # Full tilt (any direction), matching prelift_torso_pitch_penalty:
+            # acos of the down-projection, not just the sagittal component.
+            tilt_deg = torch.rad2deg(torch.acos((-proj[:, 2]).clamp(-1, 1)))
+
+            # Grab window: both marker contacts settling, lift not yet
+            # latched. Phase-averaged reach stats hide this moment, but it is
+            # where the descent posture actually matters — the prior has the
+            # knees deeply bent whenever the hands are on the box.
+            settle_buf = getattr(env, "contact_settle_buf", None)
+            if settle_buf is not None:
+                grabbing = (settle_buf > 0) & (~started)
+                if grabbing.any():
+                    records["settle_knee_mean"].append(
+                        jp[:, knee_ids].mean(dim=-1)[grabbing]
+                    )
+                    records["settle_pelvis_z"].append(pelvis_z[grabbing])
+
             prelift = ~started
             if prelift.any():
                 records["prelift_leg_mismatch"].append(mismatch[prelift])
                 records["prelift_pelvis_z"].append(pelvis_z[prelift])
+                records["prelift_torso_tilt_deg"].append(tilt_deg[prelift])
+                records["prelift_knee_mean"].append(
+                    jp[:, knee_ids].mean(dim=-1)[prelift]
+                )
             if holding.any():
-                torso_quat = env.robot.data.body_link_quat_w[:, torso_id]
-                g = torch.zeros(env.num_envs, 3, device=device)
-                g[:, 2] = -1.0
-                proj = quat_apply_inverse(torso_quat, g)
-                pitch_deg = torch.rad2deg(torch.asin(proj[:, 0].clamp(-1, 1)))
                 waist_dev = torch.sum(
                     torch.abs(
                         jp[:, waist_ids]

@@ -31,6 +31,31 @@ def main() -> None:
     print("[INFO] dualarm reward terms:",
           list(env.dualarm_reward_manager.active_terms))
 
+    # RSI checks belong HERE, before any stepping: the frozen locomotion
+    # base pulls initialized squats back toward standing within ~30 steps
+    # (that mis-timing produced the false alarm in smoke 2101636).
+    if env.cfg.rsi_fraction > 0.0:
+        pelvis_z = env.robot.data.root_link_pos_w[:, 2]
+        squat0 = pelvis_z < 0.6
+        frac = squat0.float().mean().item()
+        assert 0.05 < frac < 0.6, (
+            f"RSI fraction {env.cfg.rsi_fraction} but {frac:.2f} of envs "
+            "start below pelvis 0.6"
+        )
+        knee_ids, _ = env.robot.find_joints(
+            ("left_knee_joint", "right_knee_joint"), preserve_order=True
+        )
+        knees0 = env.robot.data.joint_pos[:, knee_ids].mean(dim=-1)
+        assert knees0[squat0].mean() > 1.5, (
+            "RSI envs should start with deeply bent knees (mocap 1.9-2.2), "
+            f"got mean {knees0[squat0].mean():.2f}"
+        )
+        print(
+            f"[INFO] RSI at reset: {frac:.2f} of envs squatting, knees mean "
+            f"{knees0[squat0].mean():.2f} rad, squat_shaping mean "
+            f"{dualarm_rewards.squat_shaping(env)[squat0].mean():.3f}"
+        )
+
     action_dim = env.action_manager.total_action_dim
     with torch.inference_mode():
         for step in range(30):
@@ -54,12 +79,18 @@ def main() -> None:
         print(f"  {name:32s} mean={val.mean():.4f} "
               f"min={val.min():.4f} max={val.max():.4f}")
 
-    # Standing near default pose: torso should be ~vertical, waist ~default.
+    # Post-settling posture checks: RSI envs may still be recovering from
+    # their squat start (or mid-episode after resets during the step loop),
+    # so posture assertions apply to the STANDING subset only.
+    standing = env.robot.data.root_link_pos_w[:, 2] > 0.7
+    assert standing.any(), "expected some standing envs after settling"
     ungated = dualarm_rewards.torso_upright(env)
-    assert ungated.mean() > 0.8, "torso_upright should be ~1 when standing"
+    assert ungated[standing].mean() > 0.8, (
+        "torso_upright should be ~1 when standing"
+    )
     assert dualarm_rewards.waist_deviation_penalty(
         env, gate_on_lift=False
-    ).max() < 0.5, "waist deviation should be near zero at default pose"
+    )[standing].max() < 0.5, "waist deviation should be near zero at default pose"
     # The locomotion base may have envs mid-gait here, so an absolute bound
     # is wrong (that false assumption failed the first smoke run at ~1.4
     # rad). Structural check instead: the penalty must be exactly zero for
