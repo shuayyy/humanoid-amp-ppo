@@ -67,7 +67,10 @@ def unitree_g1_dualarm_ppo_runner_cfg() -> RslRlAMPOnPolicyRunnerCfg:
     # Style matters most during the reach, where task shaping is sparse and
     # the annealed coef let v5 lunge instead of squatting like the mocap.
     # Pre-lift envs use this coef; post-lift envs keep the schedule above.
-    amp_prelift_reward_coef=8.0,
+    # 14 (was 8): at 8 the off-manifold reach excursion (v9-v12 pike) stayed
+    # cheaper than descending on-manifold; the excursion is brief, so the
+    # per-frame style price has to be steep to matter.
+    amp_prelift_reward_coef=14.0,
     amp_motion_files="dataset/dualarm",
     save_interval=50,
     num_steps_per_env=24,

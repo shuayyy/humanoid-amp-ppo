@@ -410,31 +410,30 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
             func=mdp.object_centered,
             weight=2.0,
         ),
-        # v5 descended with a one-leg-back lunge (and held with a fore-aft
-        # stagger) instead of the mocap's symmetric squat: nothing priced
-        # asymmetry. Gated on double support OR proximity to the object —
-        # v6 dodged the pure double-support gate by kneeling single-support.
-        "leg_symmetry": RewardTermCfg(
-            func=mdp.leg_symmetry_penalty,
-            weight=-1.0,
+        # v17 trims the reach-phase leg-posture scaffolding. leg_symmetry,
+        # prelift_peak_asymmetry, descent_speed, prelift_torso_pitch and
+        # low_straight_knee were each added (v6-v14) to punish a descent the
+        # policy only chose because the squat was UNREACHABLE: knee_target =
+        # 0.5 * (base + residual_scale * policy) capped the knee at 0.40 rad
+        # with residual_scale_legs=0.1, against a mocap squat of 1.9-2.2.
+        # With the leg scale fixed at 1.5 the target is commandable, so the
+        # motion prior (AMP prelift 14) plus the squat_shaping carrot should
+        # shape the reach; the penalties mostly overlapped each other and
+        # prelift_torso_pitch (deadband 0.9) would tax the mocap hinge
+        # itself (peak ~0.87). Re-add individually if a v2/v3-style splits
+        # or lunge family reappears — do not re-add the whole stack.
+        #
+        # Pays for the squat itself: deep knee flexion with a low pelvis,
+        # near the object and pre-lift. A pike cannot fake it (knees
+        # straight, pelvis high) and a kneel cannot farm it (knee-ground
+        # contact terminates).
+        "squat_shaping": RewardTermCfg(
+            func=mdp.squat_shaping,
+            weight=2.0,
         ),
-        # v7/v8 beat the per-step leg_symmetry cost by DIVING through the
-        # lunge in ~0.5 s (speed is a discount on any per-timestep penalty).
-        # These two close the exploit from both ends: charge the reach's
-        # peak asymmetry once at lift start (speed no longer helps), and cap
-        # pelvis descent speed so the drop must stretch over enough frames
-        # for the per-step terms and the discriminator to see it.
-        "prelift_peak_asymmetry": RewardTermCfg(
-            func=mdp.prelift_peak_asymmetry_penalty,
-            weight=-2.0,
-        ),
-        "descent_speed": RewardTermCfg(
-            func=mdp.descent_speed_penalty,
-            weight=-5.0,
-        ),
-        # Both v7 and v8 hold with one foot planted well ahead of the other;
-        # stance_width only prices total separation, and a mirrored fore-aft
-        # offset is cheap under the L1 leg_symmetry term.
+        # Hold-phase shaping is KEPT: it fixed real, verified defects (v4
+        # hunch, v5 lunge-hold, v7/v8 fore-aft stagger) and is gated on the
+        # hold, so it never touches the reach the prior is now shaping.
         "hold_stagger": RewardTermCfg(
             func=mdp.hold_foreaft_stagger_penalty,
             weight=-2.0,
@@ -589,4 +588,16 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
         ),
         decimation=4,
         episode_length_s=7.0,
+        # v15: a quarter of resets start inside the mocap squat (see
+        # rsi_* fields in G1DualarmManagerBasedRlEnvCfg) — v9-v14 proved
+        # the squat basin is never reached by exploration from standing.
+        rsi_fraction=0.25,
+        # v16: 1.5. Joint targets are default(0.0) + action_scale(0.5) *
+        # (base_action + residual_scale * policy_action), so with a large
+        # policy output of 3.0 the reachable knee angle is 0.40 rad at
+        # residual 0.1, 1.00 at 0.5, 2.50 at 1.5. The mocap squat needs
+        # 1.9-2.2 rad: v5-v14 (0.1) and v15b (0.5) could not COMMAND a
+        # squat at all, which is why no reward could buy one. 1.5 puts the
+        # target comfortably inside the action space with headroom.
+        residual_scale_legs=1.5,
     )
