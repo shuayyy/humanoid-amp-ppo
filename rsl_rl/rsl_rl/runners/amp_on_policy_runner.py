@@ -5,7 +5,6 @@
 
 from __future__ import annotations
 
-import math
 import os
 import time
 
@@ -30,9 +29,6 @@ class AMPOnPolicyRunner(OnPolicyRunner):
         self.logger_type = self.cfg.get("logger", "tensorboard").lower()
         self.disable_logs = self.logger.disable_logs
         self._last_amp_reward_coef = float(self.cfg.get("amp_reward_coef", 1.0))
-        self._last_amp_task_reward_lerp = float(
-            self.cfg.get("amp_task_reward_lerp", 0.0)
-        )
 
     def learn(self, num_learning_iterations: int, init_at_random_ep_len: bool = False) -> None:  # noqa: C901
         if init_at_random_ep_len:
@@ -125,7 +121,6 @@ class AMPOnPolicyRunner(OnPolicyRunner):
 
             loss_dict = self.alg.update()
             loss_dict["amp_reward_coef"] = self._last_amp_reward_coef
-            loss_dict["amp_task_reward_lerp"] = self._last_amp_task_reward_lerp
 
             stop = time.time()
             learn_time = stop - start
@@ -150,92 +145,56 @@ class AMPOnPolicyRunner(OnPolicyRunner):
             self.save(os.path.join(self.logger.log_dir, f"model_{self.current_learning_iteration}.pt"))  # type: ignore
             self.logger.stop_logging_writer()
 
-    def _phase_scheduled_mix(self, amp_reward_mix: dict) -> dict:
-        """Per-env AMP coefficient: boost the style reward before the lift.
-
-        Task shaping is sparse during the reach, so the annealed global coef
-        lets the policy pick any descent strategy (v5 lunged instead of the
-        mocap squat). Envs whose lift has not started get
-        ``amp_prelift_reward_coef`` instead of the scheduled coef; the
-        discriminator broadcasts a (num_envs, 1) coef tensor transparently.
-        No-op unless the config sets the coef and the env exposes lift phase.
-        """
-        prelift_coef = self.cfg.get("amp_prelift_reward_coef")
-        lift_progress = getattr(self.env.unwrapped, "_lift_progress", None)
-        if prelift_coef is None or lift_progress is None:
-            return amp_reward_mix
-
-        started, _ = lift_progress()
-        coef = torch.where(
-            started.to(self.device),
-            torch.tensor(
-                float(amp_reward_mix["amp_reward_coef"]), device=self.device
-            ),
-            torch.tensor(float(prelift_coef), device=self.device),
-        ).unsqueeze(-1)
-        return {**amp_reward_mix, "amp_reward_coef": coef}
-
     def _compute_amp_reward_mix(self, iteration: int) -> dict[str, float]:
         schedule = self.cfg.get("amp_reward_schedule", "constant")
-        final_coef = self.cfg.get("amp_reward_final_coef")
-        if final_coef is None:
-            final_coef = self.cfg.get("amp_reward_coef", 1.0)
-        initial_coef = self.cfg.get("amp_reward_initial_coef")
-        if initial_coef is None:
-            initial_coef = final_coef
-
-        final_lerp = self.cfg.get("amp_task_reward_lerp_final")
-        if final_lerp is None:
-            final_lerp = self.cfg.get("amp_task_reward_lerp", 0.0)
-        initial_lerp = self.cfg.get("amp_task_reward_lerp_initial")
-        if initial_lerp is None:
-            initial_lerp = final_lerp
-
         if schedule == "piecewise_linear":
             amp_reward_coef = self._piecewise_linear_value(
                 iteration,
                 self.cfg.get("amp_reward_schedule_points", ()),
             )
-            progress = 1.0
+        elif schedule == "constant":
+            amp_reward_coef = float(self.cfg.get("amp_reward_coef", 1.0))
         else:
-            progress = self._schedule_progress(iteration, schedule)
-            amp_reward_coef = self._lerp(
-                float(initial_coef),
-                float(final_coef),
-                progress,
+            raise ValueError(
+                "Unsupported AMP reward schedule: "
+                f"{schedule!r}. Expected 'constant' or 'piecewise_linear'."
             )
-        task_reward_lerp = self._lerp(float(initial_lerp), float(final_lerp), progress)
 
         self._last_amp_reward_coef = amp_reward_coef
-        self._last_amp_task_reward_lerp = task_reward_lerp
-        return {
-            "amp_reward_coef": amp_reward_coef,
-            "task_reward_lerp": task_reward_lerp,
-        }
+        return {"amp_reward_coef": amp_reward_coef}
 
-    def _schedule_progress(self, iteration: int, schedule: str) -> float:
-        if schedule == "constant":
-            return 1.0
+    def _phase_scheduled_mix(self, mix: dict) -> dict:
+        """Raise the AMP coef for envs whose lift has not started yet.
 
-        schedule_iterations = int(
-            self.cfg.get("amp_reward_schedule_iterations", 0)
-            or self.cfg.get("max_iterations", 1)
+        Style pressure matters most during the reach: task shaping is sparse
+        there and the descent style is decided in a handful of timesteps, so
+        a coef tuned for the hold is too cheap to outweigh reaching the box
+        early. ``amp_prelift_reward_coef`` is unset by default, which leaves
+        the episode-wide coef in place.
+
+        The returned coef is a [num_envs, 1] tensor, which broadcasts against
+        the discriminator's [num_envs, 1] logit exactly like the scalar it
+        replaces.
+        """
+        prelift_coef = self.cfg.get("amp_prelift_reward_coef")
+        if prelift_coef is None:
+            return mix
+
+        # _lift_progress()[0] LATCHES once the lift triggers; lift_phase_active
+        # goes false again after the lift completes, which would re-raise the
+        # coef during the hold.
+        progress = getattr(self.env.unwrapped, "_lift_progress", None)
+        if progress is None:
+            return mix
+        started, _ = progress()
+
+        base_coef = float(mix["amp_reward_coef"])
+        coef = torch.where(
+            started.to(self.device).reshape(-1, 1),
+            torch.full((1, 1), base_coef, device=self.device),
+            torch.full((1, 1), float(prelift_coef), device=self.device),
         )
-        progress = min(max(iteration / max(schedule_iterations, 1), 0.0), 1.0)
-
-        if schedule == "linear":
-            return progress
-        if schedule == "cosine":
-            return 0.5 - 0.5 * math.cos(math.pi * progress)
-        raise ValueError(
-            "Unsupported AMP reward schedule: "
-            f"{schedule!r}. Expected 'constant', 'linear', 'cosine', or "
-            "'piecewise_linear'."
-        )
-
-    @staticmethod
-    def _lerp(start: float, end: float, progress: float) -> float:
-        return start + (end - start) * progress
+        return {**mix, "amp_reward_coef": coef}
 
     def _piecewise_linear_value(
         self,

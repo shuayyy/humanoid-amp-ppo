@@ -42,17 +42,10 @@ class G1DualarmManagerBasedRlEnvCfg(ManagerBasedRlEnvCfg):
     # field(default_factory=dict/list) creates a fresh empty dict/list for every config object.
     # This avoids different config objects accidentally sharing the same mutable default.
 
-    # Lift trajectory. The lift is CONTACT-TRIGGERED: the reference starts
-    # rising only after both grasp-marker contacts have been held for
-    # `lift_trigger_contact_steps` consecutive steps, then takes
-    # (trajectory_end_s - trajectory_start_s) seconds. A clock-triggered lift
-    # left un-grasped episodes unrecoverable: the reference departed at 1.5 s
-    # whether or not the robot had grasped, with no path to re-grasp.
+    # Lift trajectory. The reference starts rising only after both grasp-marker
+    # contacts have been held for lift_trigger_contact_steps consecutive steps.
     trajectory_start_s: float = 1.5
     trajectory_end_s: float = 3.5
-    # Set to 0 to restore the legacy CLOCK-triggered lift (reference rises at
-    # trajectory_start_s unconditionally) — required to faithfully evaluate
-    # checkpoints trained before the contact-triggered change.
     lift_trigger_contact_steps: int = 10
     trajectory_lift_delta_z: float = 0.625
     trajectory_position_tolerance: float = 0.115
@@ -60,43 +53,8 @@ class G1DualarmManagerBasedRlEnvCfg(ManagerBasedRlEnvCfg):
     fall_angle_thresh: float = math.radians(70.0)
     virtual_pd_cfg: VirtualObjectPdCfg = field(default_factory=VirtualObjectPdCfg)
 
-    # ResMimic-style residual learning: when set, a frozen locomotion actor is
-    # loaded from this checkpoint and the RL policy's output becomes a residual
-    # added on top of the base action:
-    #   applied_action = base_action + residual_scale[joint] * policy_action
-    # The base policy supplies balance/whole-body coordination; the task policy
-    # only learns task-specific corrections. Residual authority is per joint
-    # group: the legs stay mostly under base-policy control (protecting
-    # balance) while the arms/waist get the freedom manipulation needs.
-    residual_base_checkpoint: str | None = None
-    residual_scale_legs: float = 0.1
-    residual_scale_waist: float = 0.25
-    residual_scale_arms: float = 0.5
-
-    # Depth perception. Disabled by default: the policy already receives
-    # privileged object state (pose, grasp markers, trajectory reference), so
-    # depth features are redundant for the fixed-object lift while being by
-    # far the largest GPU cost (per-env 224x224 renders + DeFM encoding; the
-    # 16k-env OOM in job 2088161 was the encoder). Re-enable for vision-based
-    # fine-tuning; the camera sensor and obs term are added back with this
-    # flag in env_cfgs.py.
-    use_depth: bool = False
-    # Depth features are recomputed every N env steps and held in between
-    # (~25 Hz effective at N=2, matching a real depth camera). Rendering +
-    # DeFM encoding every step dominates wall-clock at large env counts.
-    depth_update_interval: int = 2
-    # DeFM forward is chunked to bound activation memory: a single 16k-image
-    # batch needs ~25 GiB of activations and OOMs next to the sim. The
-    # encoder is frozen, so chunking is exact (job 2088161 failure).
-    depth_encode_chunk_size: int = 2048
-
-    # Reference-state initialization (RSI): initialize this fraction of
-    # resets from mocap squat-phase frames (robot qpos from the clip, zero
-    # velocities, box placed at the hands). v9-v14 established that no
-    # reward pressure makes the policy EXPLORE into the squat basin — it
-    # pays a -3.8/episode peak charge indefinitely rather than bend its
-    # knees. RSI puts the basin directly into the state distribution so
-    # the value function learns it pays; 0 disables.
+    # Reference-state initialization: initialize this fraction of resets from
+    # mocap squat-phase frames.
     rsi_fraction: float = 0.0
     rsi_dataset_dir: str = "dataset/dualarm"
     # Squat-phase filter on clip frames: pelvis z within this range
@@ -140,18 +98,9 @@ class G1DualarmManagerBasedRlEnvCfg(ManagerBasedRlEnvCfg):
     reset_height_decay_interval: int = 250
     reset_height_start_assistance: float = 0.5
 
-    # Object spawn-pose randomization (robustness): at full difficulty the
-    # toaster spawns with XY offset up to +/- object_spawn_xy_range and yaw
-    # up to +/- object_spawn_yaw_range. Widened adaptively 0 -> 1 by the
-    # spawn-range curriculum, and only after the reset-height bootstrap is
-    # nearly done (frac <= spawn_range_start_height_below), so the policy
-    # first learns the nominal grasp, then generalizes it.
+    # Object spawn-pose randomization.
     object_spawn_xy_range: float = 0.08
     object_spawn_yaw_range: float = math.radians(20.0)
-    spawn_range_widen_threshold: float = 0.6
-    spawn_range_widen_step: float = 0.1
-    spawn_range_widen_interval: int = 250
-    spawn_range_start_height_below: float = 0.25
 
     # Penalty on the virtual-PD force actually applied, normalized by
     # max_force. Ramped in as assistance decays (weight scales with
@@ -161,19 +110,6 @@ class G1DualarmManagerBasedRlEnvCfg(ManagerBasedRlEnvCfg):
 
     # Missing-grasp penalty during the lift window, ramped in the same way.
     missing_grasp_max_weight: float = -0.5
-
-    # Smoothness penalties, ramped in with (1 - assistance_scale) like the
-    # force penalty. Both were previously absent, making the perpetual
-    # stance-fidgeting during the hold completely free.
-    action_rate_max_weight: float = -0.01
-    joint_vel_max_weight: float = -1.0e-3
-
-    feet_slip_curriculum_schedule: tuple[tuple[int, float, float], ...] = (
-        (0, -0.5, 0.05),
-        (12_000, -0.5, 0.05),
-        (36_000, -2.0, 0.03),
-    )
-
 
     """Whether in evaluation mode. If True, will save metrics to JSON and exit after all episodes complete."""
     eval_output_dir: str | None = None
@@ -205,6 +141,8 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         
         # Initialize base environment state.
         self.cfg = cfg  # type: ignore[assignment]
+        if self.cfg.lift_trigger_contact_steps <= 0:
+            raise ValueError("lift_trigger_contact_steps must be positive.")
         if self.cfg.seed is not None:
             self.cfg.seed = self.seed(self.cfg.seed)
         self._sim_step_counter = 0
@@ -231,11 +169,6 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
             model = self.sim.model,
             data = self.sim.data,
         )
-
-        if self.cfg.use_depth and self.scene.sensor_context is None:
-            raise RuntimeError(
-                "No sensor context. Check that head_depth is in cfg.scene.sensors."
-            )
 
         if self.scene.sensor_context is not None:
             self.sim.set_sensor_context(self.scene.sensor_context)
@@ -270,11 +203,9 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         eval_mode = bool(getattr(self.cfg, "eval_mode", False))
         self.virtual_pd_assistance_scale = 0.0 if eval_mode else 1.0
         self.object_reset_height_frac = 0.0 if eval_mode else 1.0
-        self.object_spawn_range_frac = 0.0
         self.lift_success_ema = 0.0
         self.last_assist_decay_step = 0
         self.last_height_decay_step = 0
-        self.last_spawn_widen_step = 0
 
         self.virtual_pd_controller = VirtualObjectPdController(
             toaster=self.toaster,
@@ -282,28 +213,6 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
             grasp_site_ids=self.grasp_site_ids,
             cfg=self.cfg.virtual_pd_cfg,
         )
-
-        # ResMimic-style residual learning: frozen locomotion base policy.
-        self.base_policy = None
-        self.residual_scale = None
-        if self.cfg.residual_base_checkpoint is not None:
-            from mjlab_g1.rl.residual_base_policy import FrozenLocomotionPolicy
-
-            self.base_policy = FrozenLocomotionPolicy(
-                checkpoint_path=self.cfg.residual_base_checkpoint,
-                num_envs=self.num_envs,
-                device=self.device,
-            )
-            self.residual_scale = self._build_residual_scale(
-                self.base_policy.num_actions
-            )
-            print_info(
-                "[INFO]: Residual mode: frozen locomotion base policy loaded "
-                f"from {self.cfg.residual_base_checkpoint} (residual scale "
-                f"legs {self.cfg.residual_scale_legs}, "
-                f"waist {self.cfg.residual_scale_waist}, "
-                f"arms {self.cfg.residual_scale_arms})."
-            )
 
         self.common_step_counter = 0
         self.episode_length_buf = torch.zeros(
@@ -328,29 +237,6 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         self.setup_manager_visualizers()
    
   
-    def _build_residual_scale(self, num_actions: int) -> torch.Tensor:
-        """Per-joint residual authority: legs low, waist medium, arms high.
-
-        Actions map to actuators in joint order for this robot (29 matching
-        actuators/joints), so joint indices index the action vector directly.
-        """
-        joint_names = self.robot.joint_names
-        assert len(joint_names) == num_actions, (
-            f"Expected identical joint/action ordering "
-            f"({len(joint_names)} joints vs {num_actions} actions)."
-        )
-        scale = torch.full(
-            (num_actions,), self.cfg.residual_scale_arms, device=self.device
-        )
-        leg_ids, _ = self.robot.find_joints(
-            (r".*hip.*", r".*knee.*", r".*ankle.*"), preserve_order=True
-        )
-        waist_ids, _ = self.robot.find_joints((r".*waist.*",), preserve_order=True)
-        assert len(leg_ids) > 0 and len(waist_ids) > 0
-        scale[leg_ids] = self.cfg.residual_scale_legs
-        scale[waist_ids] = self.cfg.residual_scale_waist
-        return scale
-
     def _init_buffers(self):
         """
         Buffers.
@@ -386,8 +272,7 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         self.trajectory_goal_pos_w = self.trajectory_start_pos_w.clone()
         self.trajectory_goal_pos_w[:, 2] += self.cfg.trajectory_lift_delta_z
 
-        # RSI frame bank: mocap squat-phase poses (qpos[36]: root pos+quat,
-        # 29 joints in model order — same layout test/play_dataset.py replays).
+        # RSI frame bank: mocap squat-phase poses.
         self._rsi_frames = None
         if self.cfg.rsi_fraction > 0.0:
             import numpy as np
@@ -412,49 +297,6 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
                 f"[RSI] {self._rsi_frames.shape[0]} squat-phase frames, "
                 f"fraction {self.cfg.rsi_fraction}"
             )
-
-        self.depth_encoder = None
-        self.depth_feature_buf = None
-        if self.cfg.use_depth:
-            from mjlab_g1.perception.encoders import DeFMEncoder
-
-            self.depth_encoder = DeFMEncoder(device=self.device)
-
-            self.depth_feature_buf = torch.zeros(
-                self.num_envs,
-                self.depth_encoder.output_dim,
-                device=self.device,
-                dtype=torch.float32,
-            )
-
-    def update_depth_features(self) -> None:
-        """Render batched depth and encode one frozen 192-D feature per environment."""
-        if not self.cfg.use_depth:
-            return
-        assert self.depth_encoder is not None
-        assert self.depth_feature_buf is not None
-        self.sim.sense()
-
-        depth = self.scene["head_depth"].data.depth
-        assert depth is not None
-        assert depth.shape == (
-            self.num_envs,
-            224,
-            224,
-            1,
-        ), depth.shape
-        assert torch.isfinite(depth).all()
-
-        # Chunked forward: bounds encoder activation memory at large env
-        # counts (frozen encoder => chunking is exact).
-        chunk = max(int(self.cfg.depth_encode_chunk_size), 1)
-        for start in range(0, self.num_envs, chunk):
-            end = min(start + chunk, self.num_envs)
-            self.depth_feature_buf[start:end] = self.depth_encoder(
-                depth[start:end]
-            )
-
-        assert torch.isfinite(self.depth_feature_buf).all()
 
     def _init_ids_buffers(self):
         """
@@ -521,12 +363,6 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
     def step(self, action: torch.Tensor) -> types.VecEnvStepReturn:
         """Apply action, step the simulation, and return observations, rewards, dones, and infos."""
         action = action.to(self.device)
-        if self.base_policy is not None:
-            # ResMimic residual composition: the frozen locomotion actor
-            # provides the base action; the RL policy contributes a per-joint
-            # scaled task-specific correction (legs low, arms high).
-            base_action = self.base_policy.act(self)
-            action = base_action + self.residual_scale * action
         self.action_manager.process_action(action)
         q_before = self.robot.data.joint_pos.clone()
 
@@ -552,22 +388,23 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         self.episode_length_buf += 1
         self.common_step_counter += 1
 
-        # Contact-triggered lift: latch the lift start once both marker
-        # contacts have been held for the required settle time. (Skipped in
-        # legacy clock-trigger mode, lift_trigger_contact_steps <= 0.)
-        if self.cfg.lift_trigger_contact_steps > 0:
-            contacts = self._both_marker_contacts()
-            self.contact_settle_buf = torch.where(
-                contacts,
-                self.contact_settle_buf + 1,
-                torch.zeros_like(self.contact_settle_buf),
-            )
-            lift_triggered = (self.lift_start_step < 0) & (
-                self.contact_settle_buf >= self.cfg.lift_trigger_contact_steps
-            )
-            self.lift_start_step[lift_triggered] = self.episode_length_buf[
-                lift_triggered
-            ]
+        # Latch the lift start once both marker contacts have been held for the
+        # required settle time.
+        contacts = self._both_marker_contacts()
+        self.contact_settle_buf = torch.where(
+            contacts,
+            self.contact_settle_buf + 1,
+            torch.zeros_like(self.contact_settle_buf),
+        )
+        lift_triggered = (self.lift_start_step < 0) & (
+            self.contact_settle_buf >= self.cfg.lift_trigger_contact_steps
+        )
+        # Grasping before trajectory_start_s waits at the object instead of
+        # shifting the whole lift trajectory earlier.
+        start_floor = int(round(self.cfg.trajectory_start_s / self.step_dt))
+        self.lift_start_step[lift_triggered] = torch.clamp(
+            self.episode_length_buf[lift_triggered], min=start_floor
+        )
 
         self.curriculum_manager.compute()
 
@@ -604,21 +441,6 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         if "interval" in self.event_manager.available_modes:
             self.event_manager.apply(mode="interval", dt=self.step_dt)
 
-        if self.base_policy is not None:
-            # Push the post-physics (and post-reset) frame so the next act()
-            # sees the same state the RL policy observes below.
-            self.base_policy.update(self)
-
-        # Amortize depth rendering + DeFM encoding: refresh every N steps
-        # (counter was incremented above, so `- 1` makes the first step of
-        # training/resume a refresh step), hold the feature buffer otherwise.
-        if (
-            self.cfg.use_depth
-            and (self.common_step_counter - 1)
-            % max(self.cfg.depth_update_interval, 1)
-            == 0
-        ):
-            self.update_depth_features()
         self.obs_buf = self.observation_manager.compute(update_history=True)
         return(
             self.obs_buf,
@@ -658,10 +480,8 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         robot_root_state[:, :3] += env_origins
         self.robot.write_root_state_to_sim(robot_root_state, env_ids)
 
-        # Reference-state initialization: drop a fraction of resets INTO the
-        # mocap squat (zero velocities), so the squat basin is experienced
-        # rather than discovered — v9-v14 showed no reward pressure gets a
-        # converged pike policy to explore a coordinated 2-rad knee bend.
+        # Reference-state initialization: reset a fraction of environments
+        # into mocap squat-phase frames with zero velocities.
         rsi_mask = None
         rsi_frames = None
         if self._rsi_frames is not None:
@@ -694,20 +514,19 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         toaster_root_state = self.toaster.data.default_root_state[env_ids].clone()
         toaster_root_state[:, :3] += env_origins
 
-        # Spawn-pose randomization, widened 0 -> 1 by the adaptive curriculum:
-        # random XY offset and world-frame yaw so the policy generalizes the
-        # grasp instead of memorizing one reach trajectory.
-        frac = self.object_spawn_range_frac
-        if frac > 0.0:
+        # Spawn-pose randomization at full range: random XY offset and
+        # world-frame yaw so the policy generalizes the grasp instead of
+        # memorizing one reach trajectory.
+        if self.cfg.object_spawn_xy_range > 0.0 or self.cfg.object_spawn_yaw_range > 0.0:
             n = env_ids.numel()
             xy_offset = (
                 torch.rand(n, 2, device=self.device) * 2.0 - 1.0
-            ) * (frac * self.cfg.object_spawn_xy_range)
+            ) * self.cfg.object_spawn_xy_range
             toaster_root_state[:, :2] += xy_offset
 
             half_yaw = 0.5 * (
                 torch.rand(n, device=self.device) * 2.0 - 1.0
-            ) * (frac * self.cfg.object_spawn_yaw_range)
+            ) * self.cfg.object_spawn_yaw_range
             zeros = torch.zeros_like(half_yaw)
             yaw_quat = torch.stack(
                 (torch.cos(half_yaw), zeros, zeros, torch.sin(half_yaw)), dim=-1
@@ -772,8 +591,6 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         self.success_hold_buf[env_ids] = 0
         self.lift_start_step[env_ids] = -1
         self.contact_settle_buf[env_ids] = 0
-        if self.base_policy is not None:
-            self.base_policy.reset(env_ids)
 
     def _get_hand_toaster_dis(self):
         """
@@ -874,19 +691,12 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
     def _lift_progress(self) -> tuple[torch.Tensor, torch.Tensor]:
         """Return (lift_started, steps_since_lift_start) per env.
 
-        Contact-triggered by default; falls back to the legacy clock trigger
-        when ``lift_trigger_contact_steps <= 0`` (for evaluating checkpoints
-        trained before the contact-trigger change).
+        The lift starts after the bilateral grasp settle condition latches.
         """
-        if self.cfg.lift_trigger_contact_steps > 0:
-            started = self.lift_start_step >= 0
-            steps_since = (self.episode_length_buf - self.lift_start_step).clamp(
-                min=0
-            )
-        else:
-            start_steps = int(round(self.cfg.trajectory_start_s / self.step_dt))
-            started = self.episode_length_buf >= start_steps
-            steps_since = (self.episode_length_buf - start_steps).clamp(min=0)
+        started = self.lift_start_step >= 0
+        steps_since = (self.episode_length_buf - self.lift_start_step).clamp(
+            min=0
+        )
         return started, steps_since
 
     def lift_phase_active(self) -> torch.Tensor:
@@ -908,11 +718,22 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         return torch.any(left > 0, dim=-1) & torch.any(right > 0, dim=-1)
 
     def _object_lifted(self) -> torch.Tensor:
-        """Return whether toaster reached the final trajectory lift height."""
+        """Return whether the toaster has reached the goal height.
+
+        One-sided: the released policy (v16 R3, model_4999) was trained with
+        this predicate, and it gates BOTH the success termination and the
+        success_bonus (weight 4000), so the two-sided form is not an
+        interchangeable tightening — it changes what the policy is paid for.
+        The two-sided form `abs(toaster_z - goal_z) <= tol` bounds the carry
+        from above and was introduced to stop the v12 throw exploit; it is the
+        better predicate at amp_reward_coef 25 (v16 R2), but at coef 40 it
+        removes the only bootstrap-viable success path and the run never makes
+        contact (v17 V2: lift_success_ema 0.000 for 5000 iterations). Restore
+        it only together with coef 25.
+        """
         toaster_z = self.toaster.data.root_link_pos_w[:, 2]
         required_z = (
-            self.trajectory_goal_pos_w[:, 2]
-            - self.cfg.trajectory_position_tolerance
+            self.trajectory_goal_pos_w[:, 2] - self.cfg.trajectory_position_tolerance
         )
         return toaster_z >= required_z
 

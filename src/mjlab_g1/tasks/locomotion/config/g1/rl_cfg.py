@@ -49,11 +49,16 @@ def unitree_g1_locomotion_ppo_runner_cfg() -> RslRlAMPOnPolicyRunnerCfg:
       # class_name="PPO",
     ),
     experiment_name="g1_locomotion",
-    amp_num_obs=67,
-    amp_observation_mode="rich",
-    amp_reward_schedule="linear",
-    amp_reward_initial_coef=0.0,
-    amp_reward_schedule_iterations=5_000,
+    # Follows envs/amp_observations.py, which is shared with the dual-arm task
+    # and now emits joint angles only. Not a locomotion-motivated change: the
+    # velocity/gravity channels were dropped because they carried no
+    # discriminative signal for the dual-arm reach (see the note there), and
+    # the shared helper makes this side track it or fail the dim assert.
+    amp_num_obs=29,
+    amp_observation_mode="joint_pos",
+    # Ramp the style coefficient over the first 5k iterations.
+    amp_reward_schedule="piecewise_linear",
+    amp_reward_schedule_points=((0, 0.0), (5_000, 20.0)),
     save_interval=50,
     num_steps_per_env=24,
     max_iterations=50_000,

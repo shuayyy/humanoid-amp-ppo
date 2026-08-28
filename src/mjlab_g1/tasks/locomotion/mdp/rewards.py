@@ -176,33 +176,6 @@ def feet_stumble(
 
   return torch.any(horizontal > 4.0 * vertical, dim=1).float()
 
-
-
-def at_least_one_foot_contact(
-  env: G1LocomotionManagerBasedRlEnv,
-  left_sensor_name: str = "left_feet_ground_contact",
-  right_sensor_name: str = "right_feet_ground_contact",
-  contact_force_threshold: float = 5.0,
-  illegal_sensor_names: tuple[str, ...] = (),
-) -> torch.Tensor:
-  left_sensor: ContactSensor = env.scene[left_sensor_name]
-  right_sensor: ContactSensor = env.scene[right_sensor_name]
-
-  left_force = left_sensor.data.force
-  right_force = right_sensor.data.force
-  assert left_force is not None
-  assert right_force is not None
-
-  left_contact = torch.norm(left_force, dim=-1) > contact_force_threshold
-  right_contact = torch.norm(right_force, dim=-1) > contact_force_threshold
-
-  contact = torch.cat([left_contact, right_contact], dim=1)
-
-  reward = torch.any(contact, dim=1).float()
-  if illegal_sensor_names:
-    reward *= (~_illegal_contact_mask(env, illegal_sensor_names)).float()
-  return reward
-
 def self_collision_cost(env: G1LocomotionManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:
   """Cost that returns whether self-collision was detected by a sensor."""
   sensor: ContactSensor = env.scene[sensor_name]

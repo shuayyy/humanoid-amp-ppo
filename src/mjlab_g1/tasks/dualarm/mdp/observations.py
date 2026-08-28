@@ -15,48 +15,6 @@ from mjlab.utils.lab_api.math import (
   quat_conjugate,
 )
 
-def get_depth(
-    env: G1DualarmManagerBasedRlEnv,
-    sensor_name: str = "head_depth",
-) -> torch.Tensor:
-    sensor = env.scene[sensor_name]
-    depth = sensor.data.depth
-
-    if depth is None:
-        raise RuntimeError(
-            f"Camera sensor '{sensor_name}' has no depth output."
-        )
-
-    return depth
-
-
-def get_depth_features(
-    env: G1DualarmManagerBasedRlEnv,
-) -> torch.Tensor:
-    """Return cached frozen DeFM features with shape [B, 192]."""
-    features = env.depth_feature_buf
-
-    expected_shape = (env.num_envs, 192)
-    if tuple(features.shape) != expected_shape:
-        raise RuntimeError(
-            "Expected cached DeFM features with shape "
-            f"{expected_shape}, got {tuple(features.shape)}."
-        )
-
-    return features
-
-
-def base_policy_action(env: G1DualarmManagerBasedRlEnv) -> torch.Tensor:
-    """The frozen locomotion base policy's most recent action (ResMimic:
-    condition the residual policy on what the base policy is doing).
-
-    Zero when residual mode is disabled so the obs layout stays fixed.
-    """
-    if env.base_policy is None:
-        return torch.zeros_like(env.action_manager.action)
-    return env.base_policy.last_action
-
-
 def foot_air_time(env: G1DualarmManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:
     sensor: ContactSensor = env.scene[sensor_name]
     sensor_data = sensor.data

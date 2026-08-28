@@ -85,13 +85,31 @@ class G1_AMPLoader:
             num_preload_transitions=1000000,
             num_frames=5,
             amp_observation_mode="joint_pos",
+            dataset_fps=30.0,
         ):
         """Expert dataset provides AMP observations from Dog mocap dataset.
 
-        time_between_frames: Amount of time in seconds between transition.
+        time_between_frames: Spacing between the frames handed to the
+            discriminator. MUST equal the env's control step_dt: the runner
+            builds the policy-side window one env step per slot, so any other
+            value makes the two windows span different real durations (at
+            1/30 vs a 0.02s step the expert window covered 300ms of mocap
+            against 200ms of policy).
+        dataset_fps: Rate the .npy clips were captured at. Only sets the
+            clip's own timeline; frames are slerp-resampled to
+            `time_between_frames` on read, so the two rates are independent
+            and the clip keeps its real duration.
+
+        The clips store positions only (root pos+quat+29 joint pos); every
+        velocity in the AMP observation is finite-differenced by
+        `build_amp_observation` over `time_between_frames`. Differencing the
+        expert over a longer window than the policy low-passes exactly the
+        fast transients that distinguish styles, so both sides must use the
+        env's step_dt.
         """
         self.device = device
         self.time_between_frames = time_between_frames
+        self.dataset_fps = dataset_fps
         self.num_frames = num_frames
         self.amp_observation_mode = amp_observation_mode
         self._amp_observation_dim = self._resolve_amp_observation_dim(
@@ -138,7 +156,11 @@ class G1_AMPLoader:
             
             self.trajectory_idxs.append(i)
             self.trajectory_weights.append(1 / len(os.listdir(motion_files)))
-            frame_duration = 1 / 30
+            # Clip playback rate, i.e. the capture rate. Independent of
+            # time_between_frames: get_full_frame_at_time_batch slerps between
+            # stored frames, so the clip is resampled to whatever spacing the
+            # discriminator asks for while keeping its real duration.
+            frame_duration = 1 / self.dataset_fps
             
             self.trajectory_frame_durations.append(frame_duration)
             traj_len = (motion_data_processed.shape[0] - 1) * frame_duration # seconds
@@ -167,7 +189,13 @@ class G1_AMPLoader:
             # 预加载多帧数据
             self.preloaded_frames = []
             for i in range(self.num_frames):
-                frame_time = times + (i - (self.num_frames - 2)) * self.time_between_frames
+                # Offsets run -(num_frames-1) .. 0, i.e. the window ENDS at the
+                # sampled time. The runner builds the policy-side window the
+                # same way (cat(frames[:, 1:], current_obs)), so the newest
+                # slot is the present on both sides. Was (num_frames - 2),
+                # which put the expert window one frame into the future and
+                # gave the discriminator a free real-vs-fake tell.
+                frame_time = times + (i - (self.num_frames - 1)) * self.time_between_frames
                 full_frame = self.get_full_frame_at_time_batch(traj_idxs, frame_time)
                 previous_full_frame = self.get_full_frame_at_time_batch(
                     traj_idxs,

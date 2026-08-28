@@ -27,8 +27,10 @@ def get_toaster_spec() -> mujoco.MjSpec:
   spec.assets = get_toaster_assets()
   return spec
 
-
 TOASTER_INIT_KEYFRAME = EntityCfg.InitialStateCfg(
+  # 0.375 is the position the released policy (v16 R3, model_4999) was trained
+  # at. 0.445 moved the box 7 cm forward; the v16/v17 ablations showed the move
+  # is survivable but was never part of the shipped run.
   pos=(0.375, 0.1, 0.125),
   rot=(0.70710678, 0.0, 0.0, 0.70710678),
   joint_pos={".*": 0.0},

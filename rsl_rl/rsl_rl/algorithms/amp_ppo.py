@@ -53,7 +53,6 @@ class RunningMeanStd:
 
 
 class Normalizer(RunningMeanStd):
-    """Numpy/Torch normalizer kept compatible with the old AMP implementation."""
 
     def __init__(self, input_dim: int, epsilon: float = 1e-4, clip_obs: float = 10.0) -> None:
         super().__init__(shape=input_dim)
@@ -86,6 +85,8 @@ class AMP_PPO(PPO):
         amp_normalizer: Normalizer,
         amp_num_frames: int = 1,
         amp_replay_buffer_size: int = 100000,
+        amp_grad_pen_lambda: float = 10.0,
+        amp_learning_rate: float | None = None,
         num_learning_epochs: int = 5,
         num_mini_batches: int = 4,
         clip_param: float = 0.2,
@@ -140,8 +141,13 @@ class AMP_PPO(PPO):
         )
         self.amp_data = amp_data
         self.amp_normalizer = amp_normalizer
+        # Weight on the expert-side gradient penalty.
+        self.amp_grad_pen_lambda = amp_grad_pen_lambda
 
+        # Optional discriminator-specific learning rate.
+        self.amp_learning_rate = amp_learning_rate
         optimizer_class = resolve_optimizer(optimizer)
+        amp_lr = learning_rate if amp_learning_rate is None else amp_learning_rate
         self.optimizer = optimizer_class(
             [
                 {
@@ -152,11 +158,13 @@ class AMP_PPO(PPO):
                     "params": self.discriminator.trunk.parameters(),
                     "weight_decay": 10e-4,
                     "name": "amp_trunk",
+                    "lr": amp_lr,
                 },
                 {
                     "params": self.discriminator.amp_linear.parameters(),
                     "weight_decay": 10e-2,
                     "name": "amp_head",
+                    "lr": amp_lr,
                 },
             ],
             lr=learning_rate,
@@ -272,6 +280,15 @@ class AMP_PPO(PPO):
                         self.learning_rate = lr_tensor.item()
 
                     for param_group in self.optimizer.param_groups:
+                        # Skip the discriminator groups when it has its own
+                        # LR: the adaptive-KL schedule is tuned for the
+                        # policy, and letting it drive the discriminator too
+                        # was what trained the critic-of-style at the policy's
+                        # early 2.2e-3.
+                        if self.amp_learning_rate is not None and param_group.get(
+                            "name", ""
+                        ).startswith("amp_"):
+                            continue
                         param_group["lr"] = self.learning_rate
 
             ratio = torch.exp(actions_log_prob - torch.squeeze(batch.old_actions_log_prob))  # type: ignore
@@ -313,7 +330,9 @@ class AMP_PPO(PPO):
             expert_loss = nn.functional.mse_loss(expert_d, torch.ones_like(expert_d))
             policy_loss = nn.functional.mse_loss(policy_d, -torch.ones_like(policy_d))
             amp_loss = 0.5 * (expert_loss + policy_loss)
-            grad_pen_loss = self.discriminator.compute_grad_pen(expert_states, lambda_=5)
+            grad_pen_loss = self.discriminator.compute_grad_pen(
+                expert_states, lambda_=self.amp_grad_pen_lambda
+            )
 
             loss = loss + amp_loss + grad_pen_loss
             self.amp_normalizer.update(policy_states.detach().cpu().numpy())
@@ -437,9 +456,19 @@ class AMP_PPO(PPO):
         critic: MLPModel = critic_class(obs, cfg["obs_groups"], "critic", 1, **critic_cfg).to(device)
         print(f"Critic Model: {critic}")
 
+        # AMP frame spacing follows the ENV CONTROL rate, not the dataset rate.
+        # The runner builds the policy-side window one env step per slot, so
+        # any other spacing makes the two windows span different real
+        # durations (at 1/30 against a 0.02s step the expert window covered
+        # 300ms of mocap versus 200ms of policy). The loader slerps between
+        # stored frames, so the clip is resampled to this spacing while
+        # keeping its real duration; dataset_fps only sets that timeline.
+        amp_dataset_fps = float(cfg.get("amp_dataset_fps", 30.0))
+        env_step_dt = float(getattr(env.unwrapped, "step_dt", 1.0 / amp_dataset_fps))
         amp_data = G1_AMPLoader(
             device,
-            time_between_frames=1 / 50.0,
+            time_between_frames=env_step_dt,
+            dataset_fps=amp_dataset_fps,
             preload_transitions=True,
             num_preload_transitions=cfg["amp_num_preload_transitions"],
             motion_files=cfg["amp_motion_files"],
@@ -462,8 +491,6 @@ class AMP_PPO(PPO):
             cfg["amp_discr_hidden_dims"],
             device,
             amp_num_frames,
-            cfg["amp_task_reward_lerp"],
-            cfg["use_lerp"],
             cfg.get("amp_reward_additive_scale", 0.02),
         ).to(device)
 
@@ -476,6 +503,8 @@ class AMP_PPO(PPO):
             amp_data,
             amp_normalizer,
             amp_num_frames,
+            amp_grad_pen_lambda=float(cfg.get("amp_grad_pen_lambda", 10.0)),
+            amp_learning_rate=cfg.get("amp_learning_rate"),
             device=device,
             **alg_cfg,
             multi_gpu_cfg=cfg["multi_gpu"],

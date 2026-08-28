@@ -6,14 +6,12 @@ import torch.nn.utils.spectral_norm as spectral_norm
 
 class DiscriminatorMulti(nn.Module):
     def __init__(
-            self, state_dim, amp_reward_coef, hidden_layer_sizes, device, 
-            num_frames=2, task_reward_lerp=0.0, use_lerp=True,
-            additive_reward_scale=0.02):
+            self, state_dim, amp_reward_coef, hidden_layer_sizes, device,
+            num_frames=2, additive_reward_scale=0.02):
         super(DiscriminatorMulti, self).__init__()
 
         self.device = device
         self.state_dim = state_dim
-        self.use_lerp = use_lerp
         self.num_frames = num_frames  # 存储帧数参数
 
         self.amp_reward_coef = amp_reward_coef
@@ -30,8 +28,6 @@ class DiscriminatorMulti(nn.Module):
 
         self.trunk.train()
         self.amp_linear.train()
-
-        self.task_reward_lerp = task_reward_lerp
 
     def forward(self, x):
         h = self.trunk(x)
@@ -72,35 +68,28 @@ class DiscriminatorMulti(nn.Module):
     def predict_amp_reward(
             self, states,  # 改为接收多帧状态列表
             task_reward, normalizer=None,
-            amp_reward_coef=None,
-            task_reward_lerp=None):
+            amp_reward_coef=None):
         """
             states: torch.Tensor, shape=(num_envs, num_frames, state_dim)
             task_reward: torch.Tensor, shape=(num_envs, 1)
+
+        The style reward is ADDITIVE: task_reward + coef * scale * [0..1].
+        The style score is bounded in [0, 1], so the per-step style ceiling is
+        amp_reward_coef * additive_reward_scale -- check that against the
+        measured task reward before retuning the coefficient.
         """
         with torch.no_grad():
             self.eval()
             if normalizer is not None:
                 # 对每一帧状态进行归一化
                 states = normalizer.normalize_torch(states, self.device)
-            
+
             # 拼接多帧状态
             state_cat = states.flatten(1)
             d = self.amp_linear(self.trunk(state_cat))
             reward_coef = self.amp_reward_coef if amp_reward_coef is None else amp_reward_coef
-            lerp = self.task_reward_lerp if task_reward_lerp is None else task_reward_lerp
             disc_reward = reward_coef * torch.clamp(1 - (1/4) * torch.square(d - 1), min=0)
-            
-            if self.use_lerp:
-                reward = self._lerp_reward(disc_reward, task_reward.unsqueeze(-1), lerp)
-                self.train()
-                return reward.squeeze(-1), d, disc_reward.squeeze(-1) * (1.0 - lerp)
-            else:
-                disc_reward *= self.additive_reward_scale
-                reward = task_reward.unsqueeze(-1) + disc_reward
-                self.train()
-                return reward.squeeze(-1), d, disc_reward.squeeze(-1)
-
-    def _lerp_reward(self, disc_r, task_r, task_reward_lerp):
-        r = (1.0 - task_reward_lerp) * disc_r + task_reward_lerp * task_r
-        return r
+            disc_reward *= self.additive_reward_scale
+            reward = task_reward.unsqueeze(-1) + disc_reward
+            self.train()
+            return reward.squeeze(-1), d, disc_reward.squeeze(-1)

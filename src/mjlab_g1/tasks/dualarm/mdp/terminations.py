@@ -24,25 +24,12 @@ def illegal_contact(
   return illegal
 
 
-def grasp_success_held(
-  env: G1DualarmManagerBasedRlEnv,
-  left_sensor: str,
-  right_sensor: str,
-) -> torch.Tensor:
-  left_contact_sensor: ContactSensor = env.scene[left_sensor]
-  right_contact_sensor: ContactSensor = env.scene[right_sensor]
-  assert left_contact_sensor.data.found is not None
-  assert right_contact_sensor.data.found is not None
+def grasp_success_held(env: G1DualarmManagerBasedRlEnv) -> torch.Tensor:
+  """Sustained success: object at goal with both grasp contacts for hold_steps.
 
-  left_contact = torch.any(left_contact_sensor.data.found > 0, dim=-1)
-  right_contact = torch.any(right_contact_sensor.data.found > 0, dim=-1)
-  raw_success = left_contact & right_contact & env._object_lifted()
-
-  env.success_hold_buf = torch.where(
-    raw_success,
-    env.success_hold_buf + 1,
-    torch.zeros_like(env.success_hold_buf),
-  )
-
+  Read-only on success_hold_buf -- env.step() owns the increment. The earlier
+  version also incremented it here, which double-counted every holding step
+  and halved the effective hold requirement.
+  """
   return env.success_hold_buf >= env.cfg.hold_steps
-  
+

@@ -82,7 +82,6 @@ def randomize_field(
     field: str,
     ranges: tuple[float, float] | Mapping[int, tuple[float, float]],
 ) -> None:
-    """Randomize a MuJoCo model field using the old project config contract."""
     if env_ids is None:
         env_ids = torch.arange(env.num_envs, device=env.device, dtype=torch.long)
     else:

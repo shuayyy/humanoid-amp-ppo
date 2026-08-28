@@ -1,22 +1,17 @@
 """RL configuration for Unitree G1 dualarm task."""
 
 from mjlab_g1.rl import (
-  RslRlOnPolicyRunnerCfg,
   RslRlGaussianDistributionCfg,
   RslRlPpoActorCfg,
   RslRlPpoAlgorithmCfg,
   RslRlPpoCriticCfg,
+  RslRlAMPOnPolicyRunnerCfg,
 )
-
-# Keep AMP imports commented for later use.
-from mjlab_g1.rl import RslRlAMPOnPolicyRunnerCfg
 
 
 def unitree_g1_dualarm_ppo_runner_cfg() -> RslRlAMPOnPolicyRunnerCfg:
-# def unitree_g1_dualarm_ppo_runner_cfg() -> RslRlOnPolicyRunnerCfg:
   """Create RL runner configuration for Unitree G1 dualarm task."""
   return RslRlAMPOnPolicyRunnerCfg(
-  # return RslRlOnPolicyRunnerCfg(
     actor=RslRlPpoActorCfg(
       hidden_dims=(512, 256, 128),
       activation="elu",
@@ -25,6 +20,7 @@ def unitree_g1_dualarm_ppo_runner_cfg() -> RslRlAMPOnPolicyRunnerCfg:
         init_std=1.0,
         std_type="scalar",
         learn_std=True,
+        std_range=(1e-6, 1e6),
       ),
     ),
     critic=RslRlPpoCriticCfg(
@@ -49,28 +45,19 @@ def unitree_g1_dualarm_ppo_runner_cfg() -> RslRlAMPOnPolicyRunnerCfg:
       # class_name="PPO",
     ),
     experiment_name="g1_dualarm",
-    amp_num_obs=67,
-    amp_observation_mode="rich",
-    # AMP is a style regularizer, not the paycheck. Task rewards are
-    # dt-scaled (x0.02/step): full task success earns ~0.7/step and standing
-    # ~0.1/step. The additive AMP reward is coef * 0.02 * [0..1] per step, so
-    # coef 5 caps it at the standing baseline (0.1/step) and keeps the grasp
-    # discovery signal dominant. (The old (40 -> 10) schedule paid more for
-    # imitating the mocap than for completing the task.)
-    amp_reward_coef=2.0,
-    amp_reward_schedule="piecewise_linear",
-    amp_reward_schedule_points=(
-      (0, 5.0),
-      (500, 5.0),
-      (2_500, 2.0),
-    ),
-    # Style matters most during the reach, where task shaping is sparse and
-    # the annealed coef let v5 lunge instead of squatting like the mocap.
-    # Pre-lift envs use this coef; post-lift envs keep the schedule above.
-    # 14 (was 8): at 8 the off-manifold reach excursion (v9-v12 pike) stayed
-    # cheaper than descending on-manifold; the excursion is brief, so the
-    # per-frame style price has to be steep to matter.
-    amp_prelift_reward_coef=14.0,
+    clip_actions=1.5,
+    # Must stay in sync with envs/amp_observations.py.
+    amp_num_obs=29,
+    amp_observation_mode="joint_pos",
+    amp_dataset_fps=30.0,
+    amp_discr_hidden_dims=(128, 128),
+    # 40.0 reproduces the released dual-arm policy (v16 R3, model_4999): the
+    # coef-40 style pressure is what produces its mocap-depth squat. 25.0 was
+    # the v12-era value and bootstraps contact ~2.3x sooner, but the shipped
+    # checkpoint was trained at 40 — changing this invalidates reproduction.
+    amp_reward_coef=40.0,
+    amp_reward_schedule="constant",
+    amp_prelift_reward_coef=None,
     amp_motion_files="dataset/dualarm",
     save_interval=50,
     num_steps_per_env=24,

@@ -41,8 +41,7 @@ class TrainConfig:
   video: bool = True
   video_length: int = 200
   # Warm-start: path to a checkpoint whose ACTOR weights are loaded before
-  # training (iteration counter stays 0, optimizer/critic start fresh). Use with
-  # models/dualarm_from_locomotion.pt from transfer_locomotion_to_dualarm.py.
+  # training (iteration counter stays 0, optimizer/critic start fresh).
   # Ignored when --agent.resume is set (resume takes precedence).
   init_checkpoint: str | None = None
   # Randomize initial episode lengths at the start of training. Good for
@@ -185,20 +184,6 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
       },
       strict=True,
     )
-  elif getattr(cfg.env, "residual_base_checkpoint", None) is not None:
-    # ResMimic residual mode, fresh run: zero-init the residual actor's output
-    # layer so the composed action starts EXACTLY at the frozen base policy's
-    # behavior (exploration noise still flows through the Gaussian std). A
-    # randomly-initialized head would start by perturbing a working policy.
-    import torch
-
-    actor = runner.alg.get_policy()
-    linear_layers = [
-      m for m in actor.mlp.modules() if isinstance(m, torch.nn.Linear)
-    ]
-    torch.nn.init.zeros_(linear_layers[-1].weight)
-    torch.nn.init.zeros_(linear_layers[-1].bias)
-    print("[INFO]: Residual mode: zero-initialized the actor's output layer.")
 
   # Only write config files from rank 0 to avoid race conditions.
   if rank == 0:

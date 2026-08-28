@@ -12,6 +12,9 @@ wheels/
 
 # Editors
 .vscode/
+.claude/
+.agents/
+.codes/
 
 # Training outputs and experiment artifacts
 logs
@@ -24,24 +27,5 @@ models/videos/
 models/model_*.pt
 models/snapshots/
 
-# Datasets not used by the current tasks
-dataset/old
-
 # Local scratch notes, kept out of the shared history
-AMP_feature.md
-AMP_TODO.md
-DEBUG.md
-PROJECT_INFO_FOR_CHATGPT.md
-README_TASK_SPLIT.md
-REWARD.md
-TODO.md
-references.md
-vision.md
-
-# Archives and superseded trees
-rsl_rl_old/
-src.zip
-
-# Tests: only the dataset player is shared
-test/*
-!test/play_dataset.py
+CLAUDE.md

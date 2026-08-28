@@ -235,32 +235,14 @@ def resolve_obs_groups(
                         f" environment. Available observations from the environment: {list(obs.keys())}"
                     )
 
-    # Fill missing observation sets
+    # Check all required observation sets are configured explicitly.
     for default_set_name in default_sets:
         if default_set_name not in obs_groups:
-            if default_set_name in obs:
-                obs_groups[default_set_name] = [default_set_name]
-                warnings.warn(
-                    f"The observation configuration dictionary 'obs_groups' does not contain the '{default_set_name}'"
-                    f" key. As an observation group with the name '{default_set_name}' was found, this is assumed to be"
-                    f" the appropriate observation. Consider adding the '{default_set_name}' key to the 'obs_groups'"
-                    f" dictionary for clarity. This behavior will be removed in a future version."
-                )
-            elif "policy" in obs:
-                obs_groups[default_set_name] = ["policy"]
-                warnings.warn(
-                    f"The observation configuration dictionary 'obs_groups' does not contain the '{default_set_name}'"
-                    f" key. As an observation group with the name 'policy' was found, this is assumed to be the"
-                    f" appropriate observation. Consider adding the '{default_set_name}' key to the 'obs_groups'"
-                    f" dictionary for clarity. This behavior will be removed in a future version."
-                )
-            else:
-                raise ValueError(
-                    f"The observation configuration dictionary 'obs_groups' does not contain the '{default_set_name}'"
-                    f" key and no suitable observation could be found in the observations from the environment."
-                    f" Please refer to `rsl_rl.utils.resolve_obs_groups()` for information on how to configure the"
-                    f" 'obs_groups' dictionary correctly."
-                )
+            raise ValueError(
+                f"The observation configuration dictionary 'obs_groups' does not contain the '{default_set_name}'"
+                f" key. Please refer to `rsl_rl.utils.resolve_obs_groups()` for information on how to configure the"
+                f" 'obs_groups' dictionary correctly."
+            )
 
     # Print the final parsed observation sets
     print("-" * 80)

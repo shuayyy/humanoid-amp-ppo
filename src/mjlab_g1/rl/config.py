@@ -16,6 +16,14 @@ class RslRlGaussianDistributionCfg:
   """The type of noise standard deviation for the policy. Default is scalar."""
   learn_std: bool = True
   """Whether the action standard deviation is learnable."""
+  std_range: Tuple[float, float] = (1e-6, 1e6)
+  """Clamp range for the standard deviation, forwarded to the distribution.
+
+  The default is effectively unbounded. Cap the upper end when actions are
+  clipped: past the clip bound, extra std stops changing behaviour but still
+  earns the entropy bonus, so the std runs away and the sampled action
+  becomes a square wave at the clip boundary.
+  """
 
 
 @dataclass
@@ -142,23 +150,30 @@ class RslRlAMPOnPolicyRunnerCfg(RslRlOnPolicyRunnerCfg):
   amp_num_obs: int = 67
   amp_observation_mode: Literal["joint_pos", "rich"] = "rich"
   amp_num_frames: int = 10
-  use_lerp: bool = False
-  amp_task_reward_lerp: float = 0.7
   amp_reward_coef: float = 20.0
-  amp_reward_schedule: Literal[
-    "constant", "linear", "cosine", "piecewise_linear"
-  ] = "constant"
-  amp_reward_schedule_iterations: int = 0
+  # "constant" holds amp_reward_coef; "piecewise_linear" interpolates
+  # amp_reward_schedule_points ((iteration, coef), ...).
+  amp_reward_schedule: Literal["constant", "piecewise_linear"] = "constant"
   amp_reward_schedule_points: Tuple[Tuple[int, float], ...] = ()
-  amp_reward_initial_coef: float | None = None
-  amp_reward_final_coef: float | None = None
-  amp_task_reward_lerp_initial: float | None = None
-  amp_task_reward_lerp_final: float | None = None
+  # Per-step style ceiling is amp_reward_coef * this. Compare against the
+  # measured per-step task reward before retuning the coefficient.
   amp_reward_additive_scale: float = 0.02
-  # Per-env AMP coef override for envs whose lift has not started (phase-
-  # scheduled style reward). None disables the override entirely.
+  # Per-env AMP coef override for envs whose lift has not started, applied by
+  # AMPOnPolicyRunner._phase_scheduled_mix. Style pressure matters most during
+  # the reach, where task shaping is sparse and the descent style is decided.
+  # None disables the override and leaves the episode-wide coef in place.
   amp_prelift_reward_coef: float | None = None
   amp_motion_files: str = "dataset/locomotion"
   amp_num_preload_transitions: int = 200000
   amp_discr_hidden_dims: Tuple[int, ...] = (256, 256)
-  min_normalized_std: Tuple[float, ...] = (0.05,) * 20
+  # Expert-side gradient penalty weight.
+  amp_grad_pen_lambda: float = 5.0
+  # Fixed LR for the discriminator's parameter groups. None makes it share the
+  # policy's LR *and* the adaptive-KL schedule that rewrites it every update,
+  # which is what let it train at the policy's early 2.2e-3.
+  amp_learning_rate: float | None = None
+  # Rate the .npy motion clips were captured at. Drives BOTH the clip playback
+  # rate and the finite-difference dt used to synthesize expert velocities --
+  # the loader raises if the two disagree. Independent of the env control rate
+  # (50 Hz); AMP frame spacing only has to be self-consistent with the clips.
+  amp_dataset_fps: float = 30.0

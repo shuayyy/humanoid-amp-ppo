@@ -73,18 +73,6 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
             func=mdp.trajectory_reference_pos,
             noise=Unoise(n_min=-0.01, n_max=0.01),
         ),
-        # Depth features are excluded by default (cfg.use_depth=False): the
-        # policy already gets privileged object state above, and the camera
-        # was the dominant GPU cost. env_cfgs.py re-adds this term together
-        # with the camera sensor when use_depth is enabled.
-        # "depth_features": ObservationTermCfg(func=mdp.get_depth_features),
-        # Frozen locomotion base policy's latest action (ResMimic: condition
-        # the residual on the base). Keep LAST so the proprio prefix layout
-        # stays byte-identical to the locomotion policy obs.
-        "base_action": ObservationTermCfg(
-            func=mdp.base_policy_action,
-        ),
-        # "vision": ObservationTermCfg(func=mdp.vision),
     }
 
     critic_terms = {
@@ -283,11 +271,6 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
             weight=-0.5,
             params={"threshold_min": 0.05},
         ),
-        # "linear_vel_penalty": RewardTermCfg(
-        #     func=mdp.linear_vel_penalty,
-        #     weight=-0.5,
-        #     params={"threshold": 0.075},
-        # ),
         "hands_contact": RewardTermCfg(
             func=mdp.hands_contact,
             weight=0.01,
@@ -343,8 +326,7 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
                 "position_tolerance": 0.075,
             },
         ),
-        # Keep the object LEVEL, not just at the right height (v3 carried it
-        # tilted ~35 deg because nothing ever asked for orientation).
+        # Keep the object level, not just at the right height.
         "object_orientation_tracking": RewardTermCfg(
             func=mdp.object_orientation_tracking,
             weight=5.0,
@@ -377,9 +359,30 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
             weight=0.0,
         ),
         # Direct gradient on the success condition: sustained hold at goal.
+        # Already grip-gated: success_hold_buf only advances while
+        # _object_lifted() AND _both_marker_contacts() hold, so a box wedged
+        # against the torso with one hand off earns nothing here.
         "hold_at_goal": RewardTermCfg(
             func=mdp.hold_at_goal,
             weight=5.0,
+        ),
+        # One-shot terminal payment, companion to the "success" termination.
+        "success_bonus": RewardTermCfg(
+            func=mdp.success_bonus,
+            weight=4000.0,
+        ),
+        # Penalize object motion faster than the planned lift trajectory.
+        "object_speed_penalty": RewardTermCfg(
+            func=mdp.object_speed_penalty,
+            weight=-2.0,
+            params={"speed_threshold": 0.45},
+        ),
+        # Tracking is contact-gated, so a ballistic box that beats its own
+        # reference by 0.6 m simply earns nothing instead of being charged.
+        # This makes the reference a one-sided ceiling.
+        "object_trajectory_overshoot": RewardTermCfg(
+            func=mdp.object_trajectory_overshoot,
+            weight=-3.0,
         ),
         "feet_contact": RewardTermCfg(
             func=mdp.feet_contact,
@@ -393,10 +396,8 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
             weight=1.0,
             params={"gate_on_lift": True},
         ),
-        # v4 satisfied `upright` (pelvis) while folding the whole upper body
-        # at the waist. These three close the blind spots: torso_link
-        # verticality, joint-space waist fold, and where around the body the
-        # object is carried (v4 pinned it beside the right hip).
+        # Close posture blind spots during the hold: torso verticality,
+        # joint-space waist fold, and object carry position.
         "torso_upright": RewardTermCfg(
             func=mdp.torso_upright,
             weight=2.0,
@@ -410,19 +411,6 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
             func=mdp.object_centered,
             weight=2.0,
         ),
-        # v17 trims the reach-phase leg-posture scaffolding. leg_symmetry,
-        # prelift_peak_asymmetry, descent_speed, prelift_torso_pitch and
-        # low_straight_knee were each added (v6-v14) to punish a descent the
-        # policy only chose because the squat was UNREACHABLE: knee_target =
-        # 0.5 * (base + residual_scale * policy) capped the knee at 0.40 rad
-        # with residual_scale_legs=0.1, against a mocap squat of 1.9-2.2.
-        # With the leg scale fixed at 1.5 the target is commandable, so the
-        # motion prior (AMP prelift 14) plus the squat_shaping carrot should
-        # shape the reach; the penalties mostly overlapped each other and
-        # prelift_torso_pitch (deadband 0.9) would tax the mocap hinge
-        # itself (peak ~0.87). Re-add individually if a v2/v3-style splits
-        # or lunge family reappears — do not re-add the whole stack.
-        #
         # Pays for the squat itself: deep knee flexion with a low pelvis,
         # near the object and pre-lift. A pike cannot fake it (knees
         # straight, pelvis high) and a kneel cannot farm it (knee-ground
@@ -431,9 +419,12 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
             func=mdp.squat_shaping,
             weight=2.0,
         ),
-        # Hold-phase shaping is KEPT: it fixed real, verified defects (v4
-        # hunch, v5 lunge-hold, v7/v8 fore-aft stagger) and is gated on the
-        # hold, so it never touches the reach the prior is now shaping.
+        # Penalize fast downward pelvis motion during the reach.
+        "descent_speed": RewardTermCfg(
+            func=mdp.descent_speed_penalty,
+            weight=-2.0,
+            params={"max_descent_speed": 0.5},
+        ),
         "hold_stagger": RewardTermCfg(
             func=mdp.hold_foreaft_stagger_penalty,
             weight=-2.0,
@@ -448,31 +439,21 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
         ),
         "alive": RewardTermCfg(
             func=env_mdp.is_alive,
-            weight=1.0,
+            weight=0.75,
         ),
     }
     
     ### regularization rewards
     regularization_rewards = {
-        # "alive": RewardTermCfg(
-        #     func=env_mdp.is_alive,
-        #     weight=0.1,
-        # ),
         "dof_pos_limits": RewardTermCfg(func=mdp.joint_pos_limits, weight=-0.1),
-        # Smoothness: weights start at 0 and are ramped in by the smoothness
-        # curriculum as assistance decays (fidgeting was previously free).
-        "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=0.0),
-        "joint_vel_l2": RewardTermCfg(func=mdp.joint_vel_l2, weight=0.0),
-        # "action_acc_l2": RewardTermCfg(func=mdp.action_acc_l2, weight=-0.01),
-        # "joint_acc_l2": RewardTermCfg(func=mdp.joint_acc_l2, weight=-5.0e-7),
-        # "joint_torques_l2": RewardTermCfg(func=mdp.joint_torques_l2, weight=-1e-6),
+
+        "action_rate_l2": RewardTermCfg(func=mdp.action_rate_l2, weight=-0.01),
+        "joint_vel_l2": RewardTermCfg(func=mdp.joint_vel_l2, weight=-1.0e-3),
         "self_collisions": RewardTermCfg(func=mdp.self_collision_cost, weight=-0.1, params={"sensor_name": "self_collision"}),
-        # Leg/toaster contact is PENALIZED, not terminal (see terminations):
-        # a knee brushing the object is recoverable, and terminating on it was
-        # the dominant early-episode killer.
+        # Penalize leg/toaster contact without terminating the episode.
         "illegal_contact": RewardTermCfg(
             func=mdp.illegal_contact_penalty,
-            weight=-0.05,
+            weight=-0.5,
             params={
                 "sensor_names": (
                     "illegal_ground_contact",
@@ -483,9 +464,6 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
     }
     terminations = {
         "time_out": TerminationTermCfg(func=mdp.time_out, time_out=True),
-        # With the frozen locomotion base keeping the robot upright from step
-        # 0, early truncation of fallen states sharpens the value function
-        # instead of training a fall-then-wait policy.
         "fell_over": TerminationTermCfg(
             func=mdp.bad_orientation,
             params={"limit_angle": math.radians(70.0)},
@@ -501,13 +479,10 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
                 ),
             },
         ),
-        # "success": TerminationTermCfg(
-        #     func=mdp.grasp_success_held,
-        #     params={
-        #         "left_sensor": "left_hand_toaster_contact",
-        #         "right_sensor": "right_hand_toaster_contact",
-        #     },
-        # ),
+        # End the episode once the hold has been sustained for hold_steps.
+        "success": TerminationTermCfg(
+            func=mdp.grasp_success_held,
+        ),
     }
 
     ##
@@ -521,17 +496,10 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
         "object_reset_height": CurriculumTermCfg(
             func=mdp.object_reset_height_curriculum,
         ),
-        "object_spawn_range": CurriculumTermCfg(
-            func=mdp.object_spawn_range_curriculum,
-        ),
+        # Virtual-PD assistance and missing-grasp penalties are ramped by
+        # curriculum terms as the policy learns to carry the object.
         "assist_force_penalty": CurriculumTermCfg(
             func=mdp.assist_force_penalty_curriculum,
-        ),
-        "smoothness": CurriculumTermCfg(
-            func=mdp.smoothness_curriculum,
-        ),
-        "feet_slip": CurriculumTermCfg(
-            func=mdp.feet_slip_curriculum,
         ),
         "missing_grasp": CurriculumTermCfg(
             func=mdp.missing_grasp_curriculum,
@@ -588,16 +556,5 @@ def make_g1_dualarm_env_cfg() -> G1DualarmManagerBasedRlEnvCfg:
         ),
         decimation=4,
         episode_length_s=7.0,
-        # v15: a quarter of resets start inside the mocap squat (see
-        # rsi_* fields in G1DualarmManagerBasedRlEnvCfg) — v9-v14 proved
-        # the squat basin is never reached by exploration from standing.
         rsi_fraction=0.25,
-        # v16: 1.5. Joint targets are default(0.0) + action_scale(0.5) *
-        # (base_action + residual_scale * policy_action), so with a large
-        # policy output of 3.0 the reachable knee angle is 0.40 rad at
-        # residual 0.1, 1.00 at 0.5, 2.50 at 1.5. The mocap squat needs
-        # 1.9-2.2 rad: v5-v14 (0.1) and v15b (0.5) could not COMMAND a
-        # squat at all, which is why no reward could buy one. 1.5 puts the
-        # target comfortably inside the action space with headroom.
-        residual_scale_legs=1.5,
     )

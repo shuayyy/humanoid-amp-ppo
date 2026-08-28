@@ -13,9 +13,6 @@ if TYPE_CHECKING:
 def root_pos(env: G1LocomotionManagerBasedRlEnv) -> torch.Tensor:
     return env.robot.data.root_link_pos_w[:, :3]
 
-def root_ori(env: G1LocomotionManagerBasedRlEnv) -> torch.Tensor:
-    return env.robot.data.root_link_quat_w
-
 def foot_air_time(env: G1LocomotionManagerBasedRlEnv, sensor_name: str) -> torch.Tensor:
     sensor: ContactSensor = env.scene[sensor_name]
     sensor_data = sensor.data

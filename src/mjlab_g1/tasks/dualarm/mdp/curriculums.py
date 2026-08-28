@@ -12,23 +12,6 @@ from __future__ import annotations
 import torch
 
 
-def _validate_schedule_start_and_order(
-    schedule,
-    name: str,
-) -> None:
-    if len(schedule) == 0:
-        raise ValueError(f"{name} must not be empty.")
-    if schedule[0][0] != 0:
-        raise ValueError(f"{name} first stage must start at 0.")
-
-    previous_step = -1
-    for stage in schedule:
-        start_step = stage[0]
-        if start_step <= previous_step:
-            raise ValueError(f"{name} steps must be strictly ascending.")
-        previous_step = start_step
-
-
 def _interpolate_stage_values(schedule, common_step_counter: int) -> tuple[float, ...]:
     if common_step_counter <= schedule[0][0]:
         return tuple(float(value) for value in schedule[0][1:])
@@ -142,41 +125,6 @@ def object_reset_height_curriculum(
     )
 
 
-def object_spawn_range_curriculum(
-    env,
-    env_ids: torch.Tensor,
-) -> torch.Tensor:
-    """Success-adaptive widening of the object spawn-pose randomization.
-
-    Sequenced last in the difficulty ladder: only starts widening once the
-    reset-height bootstrap is nearly finished
-    (``object_reset_height_frac <= spawn_range_start_height_below``), so the
-    policy first masters the nominal grasp, then generalizes it to offset and
-    rotated spawns.
-    """
-    del env_ids
-    cfg = env.cfg
-
-    ready = (
-        env.common_step_counter - env.last_spawn_widen_step
-        >= cfg.spawn_range_widen_interval
-    )
-    if (
-        ready
-        and env.object_reset_height_frac <= cfg.spawn_range_start_height_below
-        and env.lift_success_ema >= cfg.spawn_range_widen_threshold
-    ):
-        env.object_spawn_range_frac = min(
-            1.0,
-            env.object_spawn_range_frac + cfg.spawn_range_widen_step,
-        )
-        env.last_spawn_widen_step = env.common_step_counter
-
-    return torch.tensor(
-        env.object_spawn_range_frac, device=env.device, dtype=torch.float32
-    )
-
-
 def assist_force_penalty_curriculum(
     env,
     env_ids: torch.Tensor,
@@ -202,39 +150,6 @@ def assist_force_penalty_curriculum(
     return torch.tensor(weight, device=env.device, dtype=torch.float32)
 
 
-def smoothness_curriculum(
-    env,
-    env_ids: torch.Tensor,
-) -> dict[str, torch.Tensor]:
-    """Ramp action-rate / joint-velocity penalties in as assistance decays.
-
-    weight = max_weight * (1 - assistance_scale)
-
-    Free fidgeting was the cause of the perpetual stance-shuffling during the
-    hold; ramping (instead of penalizing from step 0) keeps early exploration
-    unhindered, mirroring the assist-force penalty schedule.
-    """
-    del env_ids
-
-    ramp = 1.0 - env.virtual_pd_assistance_scale
-    action_rate_weight = env.cfg.action_rate_max_weight * ramp
-    joint_vel_weight = env.cfg.joint_vel_max_weight * ramp
-
-    term_cfg = env.reg_reward_manager.get_term_cfg("action_rate_l2")
-    term_cfg.weight = float(action_rate_weight)
-    term_cfg = env.reg_reward_manager.get_term_cfg("joint_vel_l2")
-    term_cfg.weight = float(joint_vel_weight)
-
-    return {
-        "action_rate_weight": torch.tensor(
-            action_rate_weight, device=env.device, dtype=torch.float32
-        ),
-        "joint_vel_weight": torch.tensor(
-            joint_vel_weight, device=env.device, dtype=torch.float32
-        ),
-    }
-
-
 def missing_grasp_curriculum(
     env,
     env_ids: torch.Tensor,
@@ -253,45 +168,3 @@ def missing_grasp_curriculum(
 
     return torch.tensor(weight, device=env.device, dtype=torch.float32)
 
-
-def feet_slip_curriculum(
-    env,
-    env_ids: torch.Tensor,
-) -> dict[str, torch.Tensor]:
-    """
-    Linear schedule for foot-slip penalty strength and deadzone.
-    """
-    del env_ids
-
-    schedule = env.cfg.feet_slip_curriculum_schedule
-    _validate_schedule_start_and_order(schedule, "feet_slip_curriculum_schedule")
-
-    for _, weight, threshold_min in schedule:
-        if weight > 0.0:
-            raise ValueError("feet_slip_curriculum_schedule weights must be <= 0.0.")
-        if threshold_min < 0.0:
-            raise ValueError(
-                "feet_slip_curriculum_schedule thresholds must be non-negative."
-            )
-
-    selected_weight, selected_threshold_min = _interpolate_stage_values(
-        schedule,
-        env.common_step_counter,
-    )
-
-    term_cfg = env.dualarm_reward_manager.get_term_cfg("feet_slip")
-    term_cfg.weight = float(selected_weight)
-    term_cfg.params["threshold_min"] = float(selected_threshold_min)
-
-    return {
-        "weight": torch.tensor(
-            selected_weight,
-            device=env.device,
-            dtype=torch.float32,
-        ),
-        "threshold_min": torch.tensor(
-            selected_threshold_min,
-            device=env.device,
-            dtype=torch.float32,
-        ),
-    }

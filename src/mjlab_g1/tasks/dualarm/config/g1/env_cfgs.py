@@ -8,16 +8,38 @@ from mjlab_g1.assets.toaster_constants import get_toaster_cfg
 from mjlab_g1.envs.g1_dualarm_rl_env import G1DualarmManagerBasedRlEnvCfg
 from mjlab.envs.mdp.actions import JointPositionActionCfg
 from mjlab.managers.termination_manager import TerminationTermCfg
-from mjlab.sensor import CameraSensorCfg, ContactMatch, ContactSensorCfg
+from mjlab.sensor import ContactMatch, ContactSensorCfg
 from mjlab_g1.tasks.dualarm import mdp
 from mjlab_g1.tasks.dualarm.dual_arm_env_cfg import (
   make_g1_dualarm_env_cfg,
 )
 
 
+# Dual-arm action scale, sized from the mocap clips instead of actuator limits.
+G1_29Dof_DUALARM_ACTION_SCALE: dict[str, float] = {
+  **{k: v for k, v in G1_29Dof_ACTION_SCALE.items() if k != r".*_wrist_.*_joint"},
+  # Raised: required > actuator bound.
+  r".*_knee_joint": 1.79,  # was 0.351, mocap needs 1.49
+  r".*_hip_pitch_joint": 1.75,  # was 0.548, mocap needs 1.46
+  r".*_shoulder_pitch_joint": 1.27,  # was 0.439, mocap needs 1.06
+  r".*_elbow_joint": 1.19,  # was 0.439, mocap needs 0.99
+  r".*_shoulder_roll_joint": 0.70,  # was 0.439, mocap needs 0.59
+  r".*_shoulder_yaw_joint": 0.62,  # was 0.439, mocap needs 0.51
+  r".*_ankle_pitch_joint": 0.61,  # was 0.439, mocap needs 0.51
+  # Wrists are split per axis because each axis needs a different range.
+  r".*_wrist_roll_joint": 1.19,  # mocap needs 0.99
+  r".*_wrist_yaw_joint": 0.85,  # mocap needs 0.71
+  r".*_wrist_pitch_joint": 0.48,  # mocap needs 0.40
+}
+
+
 def unitree_g1_dualarm_env_cfg(play: bool = False) -> G1DualarmManagerBasedRlEnvCfg:
   cfg = make_g1_dualarm_env_cfg()
-  cfg.scene.num_envs = 1 if play else 1024
+  # The released policy (v16 R3, model_4999) was trained at 8192 envs; 4096 is
+  # the default here so the task fits smaller GPUs. Batch size changes the
+  # gradient, so a 4096-env run tracks R3's config but not its checkpoint —
+  # pass --env.scene.num_envs 8192 to reproduce the released run's setup.
+  cfg.scene.num_envs = 1 if play else 4096
   cfg.sim.njmax = 1024
   cfg.sim.mujoco.ccd_iterations = 50
   cfg.sim.contact_sensor_maxmatch = 64
@@ -28,12 +50,6 @@ def unitree_g1_dualarm_env_cfg(play: bool = False) -> G1DualarmManagerBasedRlEnv
     "toaster": get_toaster_cfg(),
   }
 
-  # ResMimic-style residual learning is the default for this task: the frozen
-  # locomotion actor supplies balance/whole-body coordination and the RL
-  # policy learns residual corrections. Setting it here (not just in the
-  # launcher) means train AND play compose actions identically. Override with
-  # --env.residual_base_checkpoint None for a from-scratch ablation.
-  cfg.residual_base_checkpoint = "models/locomotion.pt"
   #########################################################
   ##### terrain #####
   #########################################################
@@ -187,17 +203,6 @@ def unitree_g1_dualarm_env_cfg(play: bool = False) -> G1DualarmManagerBasedRlEnv
     num_slots=1,
   )
 
-  head_depth_cfg = CameraSensorCfg(
-    name="head_depth",
-    camera_name="robot/realsense_d435_depth",
-    width=224,
-    height=224,
-    data_types=("depth",),
-    use_textures=False,
-    use_shadows=False,
-    enabled_geom_groups=(0, 1, 2),
-  )
-  
   cfg.scene.sensors = (
     self_collision_cfg,
     feet_ground_cfg,
@@ -210,24 +215,9 @@ def unitree_g1_dualarm_env_cfg(play: bool = False) -> G1DualarmManagerBasedRlEnv
     illegal_ground_contact_cfg,
   )
 
-  # Depth perception is opt-in (see use_depth in the env cfg): the camera
-  # renders 224x224 per env and dominates GPU memory/time at scale, while the
-  # policy already receives privileged object state. When enabled, add both
-  # the sensor and the obs term back.
-  if cfg.use_depth:
-    from mjlab.managers.observation_manager import ObservationTermCfg
-
-    cfg.scene.sensors = (*cfg.scene.sensors, head_depth_cfg)
-    cfg.observations["policy"].terms["depth_features"] = ObservationTermCfg(
-      func=mdp.get_depth_features,
-    )
-    cfg.observations["critic"].terms["depth_features"] = ObservationTermCfg(
-      func=mdp.get_depth_features,
-    )
-
   joint_pos_action = cfg.actions["joint_pos"]
   assert isinstance(joint_pos_action, JointPositionActionCfg)
-  joint_pos_action.scale = G1_29Dof_ACTION_SCALE
+  joint_pos_action.scale = G1_29Dof_DUALARM_ACTION_SCALE
 
   cfg.viewer.body_name = "torso_link"
 
