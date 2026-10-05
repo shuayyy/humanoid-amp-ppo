@@ -1,4 +1,4 @@
-<h1 align="center">HUMANOID AMP POO</h1>
+<h1 align="center">HUMANOID AMP PPO</h1>
 
 
 <p align="center">
