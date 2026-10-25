@@ -29,3 +29,6 @@ models/snapshots/
 
 # Local scratch notes, kept out of the shared history
 CLAUDE.md
+
+# Third-party motion datasets (licences vary; HDMI has none)
+dataset/external/
