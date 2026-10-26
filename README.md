@@ -9,12 +9,12 @@
 
 <p align="center">
   <img width="45%" src="assets/locomotion.gif" alt="Locomotion policy">
-  <img width="45%" src="assets/dual_arm.gif" alt="Dual-arm policy">
+  <img width="45%" src="assets/ppo_lift.gif" alt="Dual-arm policy">
 </p>
 <p align="center">
   <sub>
     Locomotion (<a href="assets/locomotion.mp4">mp4</a>) &nbsp;·&nbsp;
-    Dual-arm lift (<a href="assets/dual_arm.mp4">mp4</a>)
+    Dual-arm lift (<a href="assets/ppo_lift.mp4">mp4</a>)
   </sub>
 </p>
 <p align="center">
