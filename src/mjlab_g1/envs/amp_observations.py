@@ -4,8 +4,6 @@ from __future__ import annotations
 
 import torch
 
-from mjlab.utils.lab_api.math import quat_apply_inverse
-
 
 def g1_rich_amp_observations(robot, num_envs: int, device: str) -> torch.Tensor:
     """Return a motion-style AMP state derived from robot kinematics.

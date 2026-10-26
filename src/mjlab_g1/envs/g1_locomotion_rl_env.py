@@ -6,7 +6,6 @@ import torch
 
 import warp as wp
 from prettytable import PrettyTable
-import math
 from mjlab.envs import types
 from mjlab.envs.manager_based_rl_env import ManagerBasedRlEnv
 from mjlab.envs.manager_based_rl_env import ManagerBasedRlEnvCfg
@@ -17,7 +16,6 @@ from mjlab.utils.logging import print_info
 from mjlab.viewer.offscreen_renderer import OffscreenRenderer
 from mjlab.viewer.debug_visualizer import DebugVisualizer
 from mjlab_g1.envs.amp_observations import g1_rich_amp_observations
-_DESIRED_FRAME_COLORS = ((1.0, 0.5, 0.5), (0.5, 1.0, 0.5), (0.5, 0.5, 1.0))
 
 # dataclass auto-generates init/printing for config classes.
 # kw_only=True forces fields to be passed by name, avoiding argument-order mistakes.
@@ -37,11 +35,6 @@ class G1LocomotionManagerBasedRlEnvCfg(ManagerBasedRlEnvCfg):
     # field(default_factory=dict/list) creates a fresh empty dict/list for every config object.
     # This avoids different config objects accidentally sharing the same mutable default.
 
-    fall_angle_thresh: float = math.radians(70.0)
-
-    """Whether in evaluation mode. If True, will save metrics to JSON and exit after all episodes complete."""
-    eval_output_dir: str | None = None
-    """Directory to save eval metrics JSON files. If None, saves to current directory."""
 
 class G1LocomotionManagerBasedRlEnv(ManagerBasedRlEnv):
     """Manager-based RL environment."""
@@ -175,7 +168,6 @@ class G1LocomotionManagerBasedRlEnv(ManagerBasedRlEnv):
     def step(self, action: torch.Tensor) -> types.VecEnvStepReturn:
         """Apply action, step the simulation, and return observations, rewards, dones, and infos."""
         self.action_manager.process_action(action.to(self.device))
-        q_before = self.robot.data.joint_pos.clone()
 
         for _ in range(self.cfg.decimation):
             """DECIMATION is a common technique in RL environments where the simulation runs at a higher frequency than the agent's action frequency. For example, if the simulation runs at 1000 Hz and the agent acts at 20 Hz, then decimation would be 50. This means that for each action taken by the agent, the simulation will step forward 50 times before the next action is applied. This allows for more realistic physics and smoother control while keeping the agent's decision-making at a manageable frequency."""

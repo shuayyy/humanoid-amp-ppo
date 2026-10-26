@@ -32,11 +32,6 @@ def unitree_g1_locomotion_env_cfg(play: bool = False) -> G1LocomotionManagerBase
   cfg.scene.terrain.terrain_type = "plane"
   cfg.scene.terrain.terrain_generator = None
 
-  site_names = ("left_foot", "right_foot")
-  geom_names = tuple(
-    f"{side}_foot{i}_collision" for side in ("left", "right") for i in range(1, 8)
-  )
-
   #########################################################
   ##### contact sensors #####
   #########################################################

@@ -9,7 +9,6 @@ from typing import Literal
 import torch
 import tyro
 
-from mjlab_g1.envs import ManagerBasedRlEnvCfg, ManagerBasedRlEnv
 from mjlab_g1.envs.g1_locomotion_rl_env import (
   G1LocomotionManagerBasedRlEnv,
   G1LocomotionManagerBasedRlEnvCfg,

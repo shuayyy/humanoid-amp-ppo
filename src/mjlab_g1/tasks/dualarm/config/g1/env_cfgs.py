@@ -57,11 +57,6 @@ def unitree_g1_dualarm_env_cfg(play: bool = False) -> G1DualarmManagerBasedRlEnv
   cfg.scene.terrain.terrain_type = "plane"
   cfg.scene.terrain.terrain_generator = None
 
-  site_names = ("left_foot", "right_foot")
-  geom_names = tuple(
-    f"{side}_foot{i}_collision" for side in ("left", "right") for i in range(1, 8)
-  )
-
   #########################################################
   ##### contact sensors #####
   #########################################################

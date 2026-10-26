@@ -196,6 +196,13 @@ class AMPOnPolicyRunner(OnPolicyRunner):
         )
         return {**mix, "amp_reward_coef": coef}
 
+    @staticmethod
+    def _lerp(start: float, end: float, progress: float) -> float:
+        # Orphaned by the scheduling rewrite that dropped the "linear" schedule
+        # and its two other call sites; _piecewise_linear_value still needs it,
+        # so every piecewise_linear run (locomotion) died on iteration 1.
+        return start + (end - start) * progress
+
     def _piecewise_linear_value(
         self,
         iteration: int,

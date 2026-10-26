@@ -22,7 +22,6 @@ from mjlab_g1.tasks.dualarm.virtual_object_pd import (
     VirtualObjectPdCfg,
     VirtualObjectPdController,
 )
-_DESIRED_FRAME_COLORS = ((1.0, 0.5, 0.5), (0.5, 1.0, 0.5), (0.5, 0.5, 1.0))
 
 # dataclass auto-generates init/printing for config classes.
 # kw_only=True forces fields to be passed by name, avoiding argument-order mistakes.
@@ -50,7 +49,6 @@ class G1DualarmManagerBasedRlEnvCfg(ManagerBasedRlEnvCfg):
     trajectory_lift_delta_z: float = 0.625
     trajectory_position_tolerance: float = 0.115
     hold_steps: int = 20
-    fall_angle_thresh: float = math.radians(70.0)
     virtual_pd_cfg: VirtualObjectPdCfg = field(default_factory=VirtualObjectPdCfg)
 
     # Reference-state initialization: initialize this fraction of resets from
@@ -111,9 +109,6 @@ class G1DualarmManagerBasedRlEnvCfg(ManagerBasedRlEnvCfg):
     # Missing-grasp penalty during the lift window, ramped in the same way.
     missing_grasp_max_weight: float = -0.5
 
-    """Whether in evaluation mode. If True, will save metrics to JSON and exit after all episodes complete."""
-    eval_output_dir: str | None = None
-    """Directory to save eval metrics JSON files. If None, saves to current directory."""
 
 class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
     """Manager-based RL environment."""
@@ -191,8 +186,7 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
 
 
         self.robot = self.scene["robot"]
-        self.object = self.scene["toaster"]
-        self.toaster = self.object
+        self.toaster = self.scene["toaster"]
         self._init_buffers()
 
         # Both curricula start at full assistance / full bootstrap and decay
@@ -324,12 +318,6 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         self.waist_joint_ids, _ = self.robot.find_joints(
             (r".*waist.*",), preserve_order=True
         )
-        self.left_leg_sym_joint_ids, _ = self.robot.find_joints(
-            ("left_hip_pitch_joint", "left_knee_joint"), preserve_order=True
-        )
-        self.right_leg_sym_joint_ids, _ = self.robot.find_joints(
-            ("right_hip_pitch_joint", "right_knee_joint"), preserve_order=True
-        )
         self.hand_site_ids, _ = self.robot.find_sites(
             name_keys=["left_palm", "right_palm"],
             preserve_order=True,
@@ -344,8 +332,6 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         )
         assert len(self.object_body_ids) == 1
         assert len(self.grasp_site_ids) == 2
-        self.left_foot_site_ids, _ = self.robot.find_sites(name_keys=["left_foot_1", "left_foot_2", "left_foot_3", "left_foot_4"], preserve_order=True)
-        self.right_foot_site_ids, _ = self.robot.find_sites(name_keys=["right_foot_1", "right_foot_2", "right_foot_3", "right_foot_4"], preserve_order=True)
 
     def load_managers(self) -> None:
         super().load_managers()
@@ -364,7 +350,6 @@ class G1DualarmManagerBasedRlEnv(ManagerBasedRlEnv):
         """Apply action, step the simulation, and return observations, rewards, dones, and infos."""
         action = action.to(self.device)
         self.action_manager.process_action(action)
-        q_before = self.robot.data.joint_pos.clone()
 
         for _ in range(self.cfg.decimation):
             """DECIMATION is a common technique in RL environments where the simulation runs at a higher frequency than the agent's action frequency. For example, if the simulation runs at 1000 Hz and the agent acts at 20 Hz, then decimation would be 50. This means that for each action taken by the agent, the simulation will step forward 50 times before the next action is applied. This allows for more realistic physics and smoother control while keeping the agent's decision-making at a manageable frequency."""

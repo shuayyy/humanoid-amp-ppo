@@ -6,7 +6,7 @@ import sys
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, cast
+from typing import Literal
 
 import tyro
 from mjlab_g1.envs.g1_locomotion_rl_env import (
@@ -37,7 +37,6 @@ from mjlab.utils.wrappers import VideoRecorder
 class TrainConfig:
   env: G1LocomotionManagerBasedRlEnvCfg | G1DualarmManagerBasedRlEnvCfg
   agent: RslRlAMPOnPolicyRunnerCfg
-  registry_name: str | None = None
   video: bool = True
   video_length: int = 200
   # Warm-start: path to a checkpoint whose ACTOR weights are loaded before
@@ -83,9 +82,6 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
   cfg.env.seed = seed
 
   print(f"[INFO] Training with: device={device}, seed={seed}, rank={rank}")
-
-  registry_name: str | None = None
-
 
   # Enable NaN guard if requested.
   if cfg.enable_nan_guard:
@@ -154,10 +150,7 @@ def run_train(task_id: str, cfg: TrainConfig, log_dir: Path) -> None:
   runner_cls = load_runner_cls(task_id)
   assert runner_cls is not None, "AMP runner_cls is not registered for this task."
 
-  runner_kwargs = {}
-
-
-  runner = runner_cls(env, agent_cfg, str(log_dir), device, **runner_kwargs)
+  runner = runner_cls(env, agent_cfg, str(log_dir), device)
 
   add_wandb_tags(cfg.agent.wandb_tags)
   runner.add_git_repo_to_log(__file__)

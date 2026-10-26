@@ -1,7 +1,6 @@
 """RL configuration for Unitree G1 locomotion task."""
 
 from mjlab_g1.rl import (
-  RslRlOnPolicyRunnerCfg,
   RslRlGaussianDistributionCfg,
   RslRlPpoActorCfg,
   RslRlPpoAlgorithmCfg,
